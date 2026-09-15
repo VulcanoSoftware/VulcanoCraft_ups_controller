@@ -26,6 +26,10 @@ Een lichtgewicht, productie-klare UPS monitoring oplossing en webgebaseerd dashb
 Probeer de virtuele online showcase op GitHub Pages:
 👉 **[UPS Controller Live Demo](https://vulcanosoftware.github.io/VulcanoCraft_ups_controller/)**
 
+> **Standard inloggegevens voor de demo / eerste opstart:**
+> - **Gebruikersnaam**: `admin`
+> - **Wachtwoord**: `admin123`
+
 ---
 
 ## 🛠️ Installatie op Raspberry Pi 4
@@ -98,7 +102,7 @@ discord:
 
 Wanneer de software voor de eerste keer opstart zonder accounts, wordt er automatisch een standaard admin-account aangemaakt:
 - **Gebruikersnaam**: `admin`
-- **Wachtwoord**: `admin`
+- **Wachtwoord**: `admin123`
 
 Je kunt ook rechtstreeks via de commandline beheerdersaccounts aanmaken of wachtwoorden herstellen:
 
