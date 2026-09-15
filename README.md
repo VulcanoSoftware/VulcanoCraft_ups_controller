@@ -24,7 +24,7 @@ Een lichtgewicht, productie-klare UPS monitoring oplossing en webgebaseerd dashb
 ## 🚀 Live Demo / Showcase
 
 Probeer de virtuele online showcase op GitHub Pages:
-👉 **[UPS Controller Live Demo](https://github.pages.dev/docs/index.html)** *(Vervang door jouw GitHub Pages URL)*
+👉 **[UPS Controller Live Demo](https://vulcanosoftware.github.io/VulcanoCraft_ups_controller/)**
 
 ---
 
