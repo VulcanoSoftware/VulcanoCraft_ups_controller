@@ -3,37 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>UPS Monitor & Dashboard - Live Interactive Demo</title>
+    <title>UPS Monitor & Dashboard - Interactive Demo</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
-        .card { background-color: #1e293b; border: 1px solid #334155; color: #f8fafc; border-radius: 12px; }
-        .card-header { border-bottom: 1px solid #334155; font-weight: 600; }
-        .badge-online { background-color: #10b981; color: #022c22; font-weight: 600; }
-        .badge-battery { background-color: #f59e0b; color: #451a03; font-weight: 600; }
-        .badge-waiting { background-color: #3b82f6; color: #1e3a8a; font-weight: 600; }
-        .stat-value { font-size: 2.2rem; font-weight: 700; color: #38bdf8; }
-        .nav-tabs .nav-link { color: #94a3b8; border: none; font-weight: 500; }
+        body { background-color: #0b1329; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; font-size: 0.95rem; line-height: 1.5; }
+        .card { background-color: #1e293b; border: 1px solid #475569; color: #f8fafc; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); }
+        .card-header { border-bottom: 1px solid #475569; font-weight: 600; font-size: 1.05rem; background-color: rgba(15, 23, 42, 0.4); }
+        .text-muted { color: #cbd5e1 !important; }
+        .text-subtle { color: #94a3b8 !important; }
+        .badge-online { background-color: #059669; color: #ffffff; font-weight: 600; font-size: 0.9rem; padding: 0.45em 0.8em; border-radius: 6px; }
+        .badge-battery { background-color: #d97706; color: #ffffff; font-weight: 600; font-size: 0.9rem; padding: 0.45em 0.8em; border-radius: 6px; }
+        .badge-waiting { background-color: #2563eb; color: #ffffff; font-weight: 600; font-size: 0.9rem; padding: 0.45em 0.8em; border-radius: 6px; }
+        .stat-value { font-size: 2.3rem; font-weight: 700; color: #38bdf8; letter-spacing: -0.5px; }
+        .nav-tabs { border-bottom: 2px solid #334155; }
+        .nav-tabs .nav-link { color: #cbd5e1; border: none; font-weight: 600; font-size: 0.95rem; padding: 0.65rem 1.1rem; }
         .nav-tabs .nav-link.active { color: #38bdf8; background-color: transparent; border-bottom: 3px solid #38bdf8; }
-        .form-control, .form-select { background-color: #0f172a; border: 1px solid #334155; color: #f8fafc; }
-        .form-control:focus, .form-select:focus { background-color: #0f172a; color: #f8fafc; border-color: #38bdf8; box-shadow: none; }
-        .table { color: #f8fafc; }
-        .table-dark { --bs-table-bg: #1e293b; }
+        .nav-tabs .nav-link:hover:not(.active) { color: #f8fafc; }
+        .form-control, .form-select { background-color: #0f172a; border: 1px solid #475569; color: #f8fafc; font-size: 0.95rem; }
+        .form-control:focus, .form-select:focus { background-color: #0f172a; color: #f8fafc; border-color: #38bdf8; box-shadow: 0 0 0 0.25rem rgba(56, 189, 248, 0.25); }
+        .form-label { font-weight: 600; color: #e2e8f0; margin-bottom: 0.35rem; }
+        .table { color: #f8fafc; font-size: 0.95rem; }
+        .table-dark { --bs-table-bg: #1e293b; --bs-table-border-color: #334155; }
+        .table-dark th { color: #38bdf8; font-weight: 600; background-color: #0f172a; border-bottom: 2px solid #475569; }
         .demo-banner { background: linear-gradient(90deg, #1e3a8a, #0284c7); border-radius: 8px; padding: 12px 20px; font-weight: 500; }
+        .chart-legend-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px; font-size: 0.82rem; font-weight: 600; }
+        .signal-indicator-shutdown { background-color: #ef4444; color: #ffffff; }
+        .signal-indicator-wol { background-color: #10b981; color: #ffffff; }
     </style>
 </head>
 <body>
     <div class="px-4 pt-3">
         <div class="demo-banner d-flex align-items-center justify-content-between mb-3">
             <div>
-                <i class="bi bi-rocket-takeoff-fill me-2"></i>
-                <strong>GitHub Pages Showcase Demo</strong> — Experiment with simulated power outages, accounts, and admin settings!
+                <i class="bi bi-rocket-takeoff-fill me-2 fs-5"></i>
+                <strong data-i18n="demo_banner_title">GitHub Pages Showcase Demo</strong> — <span data-i18n="demo_banner_desc">Experiment with simulated power outages, accounts, and admin settings!</span>
             </div>
             <div class="d-flex align-items-center gap-2">
-                <button class="btn btn-warning btn-sm fw-bold" onclick="toggleSimulatedPower()">
-                    <i class="bi bi-power"></i> <span id="sim-power-btn-text">Simulate Power Outage</span>
+                <button class="btn btn-warning btn-sm fw-bold px-3 py-2" onclick="toggleSimulatedPower()">
+                    <i class="bi bi-power"></i> <span id="sim-power-btn-text" data-i18n="btn_sim_power">Simulate Power Outage</span>
                 </button>
             </div>
         </div>
@@ -46,12 +55,16 @@
                 <span class="fw-bold fs-4">UPS Controller</span>
             </a>
             <div class="d-flex align-items-center gap-3">
+                <select id="lang-select" class="form-select form-select-sm bg-dark text-light border-secondary" style="width: auto;" onchange="setLanguage(this.value)">
+                    <option value="nl">🇳🇱 Nederlands</option>
+                    <option value="en">🇬🇧 English</option>
+                </select>
                 <span id="user-status-text" class="text-muted small">Public View</span>
                 <button id="btn-login-modal" class="btn btn-outline-info btn-sm" onclick="openLoginModal()">
-                    <i class="bi bi-box-arrow-in-right"></i> Admin Login
+                    <i class="bi bi-box-arrow-in-right"></i> <span data-i18n="login">Admin Login</span>
                 </button>
                 <button id="btn-logout" class="btn btn-outline-danger btn-sm d-none" onclick="logout()">
-                    <i class="bi bi-box-arrow-right"></i> Logout
+                    <i class="bi bi-box-arrow-right"></i> <span data-i18n="logout">Logout</span>
                 </button>
             </div>
         </div>
@@ -62,22 +75,27 @@
         <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
             <li class="nav-item">
                 <button class="nav-link active" id="tab-overview-btn" data-bs-toggle="tab" data-bs-target="#tab-overview">
-                    <i class="bi bi-speedometer2"></i> Dashboard Overview
+                    <i class="bi bi-speedometer2"></i> <span data-i18n="tab_overview">Dashboard Overview</span>
                 </button>
             </li>
             <li class="nav-item">
                 <button class="nav-link" id="tab-history-btn" data-bs-toggle="tab" data-bs-target="#tab-history">
-                    <i class="bi bi-graph-up"></i> History & Logs
+                    <i class="bi bi-graph-up"></i> <span data-i18n="tab_history">History & Logs</span>
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="tab-nut-btn" data-bs-toggle="tab" data-bs-target="#tab-nut">
+                    <i class="bi bi-cpu"></i> <span data-i18n="tab_nut">NUT Variables</span>
                 </button>
             </li>
             <li class="nav-item admin-only d-none">
                 <button class="nav-link" id="tab-settings-btn" data-bs-toggle="tab" data-bs-target="#tab-settings">
-                    <i class="bi bi-gear-fill"></i> Settings & Control
+                    <i class="bi bi-gear-fill"></i> <span data-i18n="tab_settings">Settings & Control</span>
                 </button>
             </li>
             <li class="nav-item admin-only d-none">
                 <button class="nav-link" id="tab-users-btn" data-bs-toggle="tab" data-bs-target="#tab-users">
-                    <i class="bi bi-people-fill"></i> User Accounts
+                    <i class="bi bi-people-fill"></i> <span data-i18n="tab_users">User Accounts</span>
                 </button>
             </li>
         </ul>
@@ -88,16 +106,16 @@
                 <div class="row g-4 mb-4">
                     <div class="col-md-3">
                         <div class="card p-3">
-                            <div class="text-muted small fw-semibold">SYSTEM STATUS</div>
+                            <div class="text-muted small fw-semibold" data-i18n="stat_sys_status">SYSTEM STATUS</div>
                             <div class="d-flex align-items-center justify-content-between mt-2">
-                                <span id="stat-state" class="badge badge-online fs-6 px-3 py-2">ONLINE</span>
+                                <span id="stat-state" class="badge badge-online">ONLINE</span>
                                 <i id="state-icon" class="bi bi-shield-check fs-2 text-success"></i>
                             </div>
                         </div>
                     </div>
                     <div class="col-md-3">
                         <div class="card p-3">
-                            <div class="text-muted small fw-semibold">BATTERY CHARGE</div>
+                            <div class="text-muted small fw-semibold" data-i18n="stat_battery_charge">BATTERY CHARGE</div>
                             <div class="stat-value mt-1" id="stat-charge">100%</div>
                             <div class="progress mt-2" style="height: 6px;">
                                 <div id="progress-charge" class="progress-bar bg-info" style="width: 100%"></div>
@@ -106,16 +124,16 @@
                     </div>
                     <div class="col-md-3">
                         <div class="card p-3">
-                            <div class="text-muted small fw-semibold">ESTIMATED RUNTIME</div>
+                            <div class="text-muted small fw-semibold" data-i18n="stat_est_runtime">ESTIMATED RUNTIME</div>
                             <div class="stat-value mt-1" id="stat-runtime">60 min</div>
-                            <div class="text-muted small mt-1">Threshold: <span id="stat-threshold">50</span>%</div>
+                            <div class="text-muted small mt-1"><span data-i18n="threshold">Threshold</span>: <span id="stat-threshold">50</span>%</div>
                         </div>
                     </div>
                     <div class="col-md-3">
                         <div class="card p-3">
-                            <div class="text-muted small fw-semibold">UPS LOAD & VOLTAGE</div>
+                            <div class="text-muted small fw-semibold" data-i18n="stat_load_voltage">UPS LOAD & VOLTAGE</div>
                             <div class="stat-value mt-1" id="stat-load">15 %</div>
-                            <div class="text-muted small mt-1">Input: <span id="stat-in-v">230.0</span>V</div>
+                            <div class="text-muted small mt-1"><span data-i18n="input_v">Input</span>: <span id="stat-in-v">230.0</span>V</div>
                         </div>
                     </div>
                 </div>
@@ -123,8 +141,12 @@
                 <div class="row g-4">
                     <div class="col-lg-8">
                         <div class="card p-3">
-                            <div class="card-header bg-transparent px-0 pt-0 text-info">
-                                <i class="bi bi-activity"></i> Live Battery & Load Chart
+                            <div class="card-header bg-transparent px-0 pt-0 text-info d-flex justify-content-between align-items-center">
+                                <span><i class="bi bi-activity"></i> <span data-i18n="chart_title">Live Battery & Load Chart</span></span>
+                                <div class="d-flex gap-2">
+                                    <span class="chart-legend-badge signal-indicator-shutdown"><i class="bi bi-circle-fill fs-6"></i> <span data-i18n="signal_shutdown_legend">Shutdown Signal</span></span>
+                                    <span class="chart-legend-badge signal-indicator-wol"><i class="bi bi-circle-fill fs-6"></i> <span data-i18n="signal_wol_legend">WoL Signal</span></span>
+                                </div>
                             </div>
                             <div style="height: 280px;">
                                 <canvas id="liveChart"></canvas>
@@ -134,23 +156,10 @@
                     <div class="col-lg-4">
                         <div class="card p-3 h-100">
                             <div class="card-header bg-transparent px-0 pt-0 text-info">
-                                <i class="bi bi-hdd-network"></i> Monitored Proxmox Nodes
+                                <i class="bi bi-hdd-network"></i> <span data-i18n="monitored_nodes">Monitored Proxmox Nodes</span>
                             </div>
                             <div id="nodes-list" class="mt-3">
-                                <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-dark rounded border border-secondary">
-                                    <div>
-                                        <span class="fw-bold">pve1</span>
-                                        <div class="text-muted small">192.168.1.10</div>
-                                    </div>
-                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Registered</span>
-                                </div>
-                                <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-dark rounded border border-secondary">
-                                    <div>
-                                        <span class="fw-bold">pve2</span>
-                                        <div class="text-muted small">192.168.1.11</div>
-                                    </div>
-                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Registered</span>
-                                </div>
+                                <!-- Rendered dynamically -->
                             </div>
                         </div>
                     </div>
@@ -161,18 +170,40 @@
             <div class="tab-pane fade" id="tab-history">
                 <div class="card p-3">
                     <div class="card-header bg-transparent px-0 pt-0 text-info">
-                        <i class="bi bi-journal-text"></i> System Event Logs
+                        <i class="bi bi-journal-text"></i> <span data-i18n="event_logs_title">System Event Logs</span>
                     </div>
                     <div class="table-responsive mt-3">
                         <table class="table table-dark table-hover align-middle">
                             <thead>
                                 <tr>
-                                    <th>Timestamp</th>
-                                    <th>Level</th>
-                                    <th>Message</th>
+                                    <th data-i18n="col_timestamp">Timestamp</th>
+                                    <th data-i18n="col_level">Level</th>
+                                    <th data-i18n="col_message">Message</th>
                                 </tr>
                             </thead>
                             <tbody id="events-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- NUT VARIABLES TAB -->
+            <div class="tab-pane fade" id="tab-nut">
+                <div class="card p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="text-info mb-0"><i class="bi bi-cpu"></i> <span data-i18n="nut_variables_title">ALL NUT UPS Variables</span></h5>
+                        <input type="text" id="nut-search-input" class="form-control" style="max-width: 300px;" placeholder="Search NUT variables..." oninput="filterNutVariables()">
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-dark table-striped align-middle">
+                            <thead>
+                                <tr>
+                                    <th style="width: 45%;" data-i18n="col_nut_variable">Variable Name</th>
+                                    <th style="width: 55%;" data-i18n="col_nut_value">Value</th>
+                                </tr>
+                            </thead>
+                            <tbody id="nut-table-body">
                             </tbody>
                         </table>
                     </div>
@@ -184,57 +215,158 @@
                 <div class="row g-4">
                     <div class="col-lg-8">
                         <div class="card p-4">
-                            <h5 class="text-info mb-3"><i class="bi bi-sliders"></i> System Configuration</h5>
+                            <h5 class="text-info mb-3"><i class="bi bi-sliders"></i> <span data-i18n="settings_title">System Configuration</span></h5>
                             <form id="settings-form" onsubmit="saveSettings(event)">
-                                <h6 class="text-warning mt-2 mb-3">UPS Settings</h6>
+                                <h6 class="text-warning mt-2 mb-3"><i class="bi bi-globe"></i> <span data-i18n="sec_web_settings">Web Server Settings</span></h6>
                                 <div class="row g-3 mb-3">
                                     <div class="col-md-6">
-                                        <label class="form-label">NUT UPS Name</label>
+                                        <label class="form-label" data-i18n="cfg_web_host">Server Host / Bind IP</label>
+                                        <input type="text" id="cfg-web-host" class="form-control" value="0.0.0.0" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_web_port">Web Port</label>
+                                        <input type="number" id="cfg-web-port" class="form-control" value="8080" min="1" max="65535" required>
+                                    </div>
+                                </div>
+
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-battery-charging"></i> <span data-i18n="sec_ups_settings">UPS Settings (NUT)</span></h6>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_ups_name">NUT UPS Name</label>
                                         <input type="text" id="cfg-ups-name" class="form-control" value="gembird@localhost" required>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label">Battery Threshold (%)</label>
+                                        <label class="form-label" data-i18n="cfg_ups_threshold">Battery Threshold (%)</label>
                                         <input type="number" id="cfg-ups-threshold" class="form-control" value="50" min="1" max="99" required>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label">Poll Interval (seconds)</label>
+                                        <label class="form-label" data-i18n="cfg_ups_poll">Poll Interval (seconds)</label>
                                         <input type="number" id="cfg-ups-poll" class="form-control" value="5" min="2" required>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label">On-Battery Grace Period (seconds)</label>
+                                        <label class="form-label" data-i18n="cfg_ups_grace">On-Battery Grace Period (seconds)</label>
                                         <input type="number" id="cfg-ups-grace" class="form-control" value="15" min="0" required>
                                     </div>
                                 </div>
 
-                                <h6 class="text-warning mt-4 mb-3">Startup & WoL Settings</h6>
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-hourglass-split"></i> <span data-i18n="sec_startup_settings">Startup & Conditions</span></h6>
                                 <div class="row g-3 mb-3">
                                     <div class="col-md-6">
-                                        <label class="form-label">Startup Stability Delay (seconds)</label>
+                                        <label class="form-label" data-i18n="cfg_startup_delay">Startup Stability Delay (seconds)</label>
                                         <input type="number" id="cfg-startup-delay" class="form-control" value="40" min="0" required>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label">WoL Broadcast IP</label>
-                                        <input type="text" id="cfg-wol-broadcast" class="form-control" value="192.168.1.255" required>
+                                        <label class="form-label" data-i18n="cfg_battery_above">Required Battery Above (%)</label>
+                                        <input type="number" id="cfg-battery-above" class="form-control" value="70" min="0" max="100">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input" type="checkbox" id="cfg-inet-enabled" checked>
+                                            <label class="form-check-label fw-bold" data-i18n="cfg_inet_enable">Enable Internet Ping Check</label>
+                                        </div>
+                                        <input type="text" id="cfg-inet-host" class="form-control mt-2" value="1.1.1.1">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input" type="checkbox" id="cfg-dns-enabled">
+                                            <label class="form-check-label fw-bold" data-i18n="cfg_dns_enable">Enable DNS Ping Check</label>
+                                        </div>
+                                        <input type="text" id="cfg-dns-host" class="form-control mt-2" value="google.com">
                                     </div>
                                 </div>
 
-                                <h6 class="text-warning mt-4 mb-3">Discord Notifications</h6>
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-hdd-stack"></i> <span data-i18n="sec_proxmox_settings">Proxmox Cluster & Nodes</span></h6>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-12">
+                                        <label class="form-label" data-i18n="cfg_proxmox_token">Proxmox API Token</label>
+                                        <input type="text" id="cfg-proxmox-token" class="form-control" value="root@pam!ups=SECRET_TOKEN" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input" type="checkbox" id="cfg-proxmox-ssl">
+                                            <label class="form-check-label fw-bold" data-i18n="cfg_proxmox_ssl">Verify SSL Certificate</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_proxmox_timeout">API Timeout (seconds)</label>
+                                        <input type="number" id="cfg-proxmox-timeout" class="form-control" value="15" min="1" required>
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <label class="form-label mb-0" data-i18n="cfg_proxmox_nodes_list">Proxmox Monitored Nodes</label>
+                                        <button type="button" class="btn btn-outline-success btn-sm" onclick="addNodeRow()">
+                                            <i class="bi bi-plus-circle"></i> <span data-i18n="btn_add_node">Add Node</span>
+                                        </button>
+                                    </div>
+                                    <div id="nodes-editor-container">
+                                        <!-- Node rows -->
+                                    </div>
+                                </div>
+
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-broadcast"></i> <span data-i18n="sec_wol_settings">Wake-on-LAN Settings</span></h6>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_wol_broadcast">WoL Broadcast IP</label>
+                                        <input type="text" id="cfg-wol-broadcast" class="form-control" value="192.168.1.255" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_wol_port">WoL Port</label>
+                                        <input type="number" id="cfg-wol-port" class="form-control" value="9" min="1" max="65535" required>
+                                    </div>
+                                </div>
+
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-discord"></i> <span data-i18n="sec_discord_settings">Discord Notifications</span></h6>
                                 <div class="row g-3 mb-3">
                                     <div class="col-md-4">
-                                        <div class="form-check mt-4">
+                                        <div class="form-check mt-2">
                                             <input class="form-check-input" type="checkbox" id="cfg-discord-enabled">
-                                            <label class="form-check-label">Enable Notifications</label>
+                                            <label class="form-check-label fw-bold" data-i18n="cfg_discord_enable">Enable Discord Alerts</label>
                                         </div>
                                     </div>
                                     <div class="col-md-8">
-                                        <label class="form-label">Webhook URL</label>
+                                        <label class="form-label" data-i18n="cfg_discord_url">Webhook URL</label>
                                         <input type="text" id="cfg-discord-url" class="form-control" value="">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_discord_user">Bot Username</label>
+                                        <input type="text" id="cfg-discord-username" class="form-control" value="UPS Controller">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_discord_mention">Mention String</label>
+                                        <input type="text" id="cfg-discord-mention" class="form-control" placeholder="e.g. @everyone">
+                                    </div>
+                                </div>
+
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-file-earmark-text"></i> <span data-i18n="sec_logging_settings">Logging Settings</span></h6>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_log_level">Log Level</label>
+                                        <select id="cfg-log-level" class="form-select">
+                                            <option value="DEBUG">DEBUG</option>
+                                            <option value="INFO" selected>INFO</option>
+                                            <option value="WARNING">WARNING</option>
+                                            <option value="ERROR">ERROR</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_log_file">Log File Path</label>
+                                        <input type="text" id="cfg-log-file" class="form-control" value="/var/log/ups-controller.log">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_log_bytes">Max File Bytes</label>
+                                        <input type="number" id="cfg-log-bytes" class="form-control" value="5000000" min="1000">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_log_backup">Backup Count</label>
+                                        <input type="number" id="cfg-log-backup" class="form-control" value="5" min="0">
                                     </div>
                                 </div>
 
                                 <div class="d-flex justify-content-end mt-4">
-                                    <button type="submit" class="btn btn-info px-4">
-                                        <i class="bi bi-save"></i> Save Configuration
+                                    <button type="submit" class="btn btn-info px-4 py-2 fw-bold">
+                                        <i class="bi bi-save"></i> <span data-i18n="btn_save_config">Save Configuration</span>
                                     </button>
                                 </div>
                             </form>
@@ -243,14 +375,14 @@
 
                     <div class="col-lg-4">
                         <div class="card p-4">
-                            <h5 class="text-warning mb-3"><i class="bi bi-tools"></i> Admin Manual Actions</h5>
-                            <p class="text-muted small">Execute test triggers on configured Proxmox nodes.</p>
+                            <h5 class="text-warning mb-3"><i class="bi bi-tools"></i> <span data-i18n="admin_actions_title">Admin Manual Actions</span></h5>
+                            <p class="text-muted small" data-i18n="admin_actions_desc">Execute test triggers on configured Proxmox nodes.</p>
                             <div class="d-grid gap-3 mt-3">
-                                <button class="btn btn-outline-warning" onclick="triggerTestAction('test-wol')">
-                                    <i class="bi bi-broadcast"></i> Send Test Wake-on-LAN
+                                <button class="btn btn-outline-warning text-start" onclick="triggerTestAction('test-wol')">
+                                    <i class="bi bi-broadcast me-2"></i> <span data-i18n="btn_test_wol">Send Test Wake-on-LAN</span>
                                 </button>
-                                <button class="btn btn-outline-danger" onclick="triggerTestAction('test-shutdown')">
-                                    <i class="bi bi-power"></i> Send Test Shutdown API
+                                <button class="btn btn-outline-danger text-start" onclick="triggerTestAction('test-shutdown')">
+                                    <i class="bi bi-power me-2"></i> <span data-i18n="btn_test_shutdown">Send Test Shutdown API</span>
                                 </button>
                             </div>
                             <div id="action-results" class="mt-3 small"></div>
@@ -264,15 +396,15 @@
                 <div class="row g-4">
                     <div class="col-md-7">
                         <div class="card p-4">
-                            <h5 class="text-info mb-3"><i class="bi bi-shield-lock"></i> Admin Accounts</h5>
+                            <h5 class="text-info mb-3"><i class="bi bi-shield-lock"></i> <span data-i18n="users_title">Admin Accounts</span></h5>
                             <div class="table-responsive">
                                 <table class="table table-dark align-middle">
                                     <thead>
                                         <tr>
                                             <th>ID</th>
-                                            <th>Username</th>
-                                            <th>Created</th>
-                                            <th>Action</th>
+                                            <th data-i18n="col_username">Username</th>
+                                            <th data-i18n="col_created">Created</th>
+                                            <th data-i18n="col_action">Action</th>
                                         </tr>
                                     </thead>
                                     <tbody id="users-table-body">
@@ -283,18 +415,18 @@
                     </div>
                     <div class="col-md-5">
                         <div class="card p-4">
-                            <h5 class="text-info mb-3"><i class="bi bi-person-plus"></i> Create Admin User</h5>
+                            <h5 class="text-info mb-3"><i class="bi bi-person-plus"></i> <span data-i18n="create_user_title">Create Admin User</span></h5>
                             <form onsubmit="createAdminUser(event)">
                                 <div class="mb-3">
-                                    <label class="form-label">Username</label>
+                                    <label class="form-label" data-i18n="label_username">Username</label>
                                     <input type="text" id="new-username" class="form-control" required>
                                 </div>
                                 <div class="mb-3">
-                                    <label class="form-label">Password</label>
+                                    <label class="form-label" data-i18n="label_password">Password</label>
                                     <input type="password" id="new-password" class="form-control" required>
                                 </div>
-                                <button type="submit" class="btn btn-success w-100">
-                                    <i class="bi bi-check-circle"></i> Create Account
+                                <button type="submit" class="btn btn-success w-100 fw-bold">
+                                    <i class="bi bi-check-circle"></i> <span data-i18n="btn_create_account">Create Account</span>
                                 </button>
                             </form>
                         </div>
@@ -309,21 +441,21 @@
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card p-3">
                 <div class="modal-header border-0">
-                    <h5 class="modal-title text-info"><i class="bi bi-shield-lock-fill"></i> Admin Login</h5>
+                    <h5 class="modal-title text-info"><i class="bi bi-shield-lock-fill"></i> <span data-i18n="login_modal_title">Admin Login</span></h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
                     <div id="login-error" class="alert alert-danger d-none"></div>
                     <form onsubmit="handleLogin(event)">
                         <div class="mb-3">
-                            <label class="form-label">Username</label>
+                            <label class="form-label" data-i18n="label_username">Username</label>
                             <input type="text" id="login-username" class="form-control" value="admin" required autocomplete="username">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">Password</label>
+                            <label class="form-label" data-i18n="label_password">Password</label>
                             <input type="password" id="login-password" class="form-control" value="admin123" required autocomplete="current-password">
                         </div>
-                        <button type="submit" class="btn btn-info w-100 mt-2">Login</button>
+                        <button type="submit" class="btn btn-info w-100 mt-2 fw-bold" data-i18n="btn_login_submit">Login</button>
                     </form>
                 </div>
             </div>
@@ -337,6 +469,12 @@
         let authUser = null;
         let chart = null;
         let historyData = [];
+        let currentLang = localStorage.getItem('ups_lang') || 'nl';
+        let nodesList = [
+            { name: 'pve1', host: '192.168.1.10', mac: 'aa:bb:cc:dd:ee:ff' },
+            { name: 'pve2', host: '192.168.1.11', mac: '11:22:33:44:55:66' }
+        ];
+
         let users = [
             { id: 1, username: 'admin', password: 'admin123', created_at: new Date().toISOString().slice(0, 19).replace('T', ' ') }
         ];
@@ -344,20 +482,267 @@
             { timestamp: Date.now()/1000 - 60, level: 'INFO', message: 'UPS Controller background loop started' }
         ];
 
+        let rawNutData = {
+            "battery.charge": "100",
+            "battery.charge.low": "20",
+            "battery.charge.warning": "50",
+            "battery.mfr.date": "2023/05/12",
+            "battery.runtime": "3600",
+            "battery.runtime.low": "300",
+            "battery.type": "PbAc",
+            "battery.voltage": "13.60",
+            "battery.voltage.nominal": "12.0",
+            "device.mfr": "Gembird",
+            "device.model": "EG-UPS-001",
+            "device.type": "ups",
+            "driver.name": "blazer_usb",
+            "driver.parameter.pollinterval": "2",
+            "driver.parameter.port": "/dev/ttyUSB0",
+            "driver.version": "2.7.4",
+            "driver.version.internal": "0.43",
+            "input.current.nominal": "2.5",
+            "input.frequency": "50.0",
+            "input.frequency.nominal": "50.0",
+            "input.voltage": "230.0",
+            "input.voltage.fault": "230.0",
+            "input.voltage.nominal": "230.0",
+            "output.frequency": "50.0",
+            "output.voltage": "230.0",
+            "ups.beeper.status": "enabled",
+            "ups.delay.shutdown": "30",
+            "ups.delay.start": "180",
+            "ups.load": "15",
+            "ups.mfr": "Gembird",
+            "ups.model": "EG-UPS-001",
+            "ups.productid": "0001",
+            "ups.realpower.nominal": "390",
+            "ups.status": "OL",
+            "ups.timer.shutdown": "-1",
+            "ups.timer.start": "-1",
+            "ups.type": "offline / line-interactive",
+            "ups.vendorid": "0665"
+        };
+
+        const i18n = {
+            nl: {
+                demo_banner_title: "GitHub Pages Showcase Demo",
+                demo_banner_desc: "Experimenteer met gesimuleerde stroomuitval, accounts en beheerdersinstellingen!",
+                btn_sim_power: "Simuleer Stroomuitval",
+                btn_restore_power: "Herstel Netspanning",
+                login: "Admin Inloggen",
+                logout: "Uitloggen",
+                public_view: "Publieke Weergave",
+                logged_in_as: "Ingelogd als: ",
+                tab_overview: "Dashboard Overzicht",
+                tab_history: "Historie & Logboek",
+                tab_nut: "NUT Variabelen",
+                tab_settings: "Instellingen & Beheer",
+                tab_users: "Gebruikersaccounts",
+                stat_sys_status: "SYSTEEMSTATUS",
+                stat_battery_charge: "ACCULADING",
+                stat_est_runtime: "GESCHATTE RUNTIME",
+                stat_load_voltage: "UPS BELASTING & SPANNING",
+                threshold: "Drempelwaarde",
+                input_v: "Ingang",
+                chart_title: "Live Accu & Belasting Grafiek",
+                signal_shutdown_legend: "Shutdown Signaal",
+                signal_wol_legend: "WoL Signaal",
+                monitored_nodes: "Gemonitorde Proxmox Nodes",
+                registered: "Geregistreerd",
+                event_logs_title: "Systeem Logboek",
+                col_timestamp: "Tijdstip",
+                col_level: "Niveau",
+                col_message: "Bericht",
+                nut_variables_title: "Alle NUT UPS Variabelen",
+                col_nut_variable: "Variabele Naam",
+                col_nut_value: "Waarde",
+                search_nut_placeholder: "Zoek NUT variabelen...",
+                settings_title: "Systeem Configuratie",
+                sec_web_settings: "Web Server Instellingen",
+                cfg_web_host: "Server Host / Bind IP",
+                cfg_web_port: "Web Poort",
+                sec_ups_settings: "UPS Instellingen (NUT)",
+                cfg_ups_name: "NUT UPS Naam",
+                cfg_ups_threshold: "Accu Drempelwaarde (%)",
+                cfg_ups_poll: "Poll Interval (seconden)",
+                cfg_ups_grace: "Accu Genadewacht (seconden)",
+                sec_startup_settings: "Opstart & Voorwaarden",
+                cfg_startup_delay: "Opstart Vertraging (seconden)",
+                cfg_battery_above: "Vereiste Acculading Boven (%)",
+                cfg_inet_enable: "Internet Ping Controle Inschakelen",
+                cfg_dns_enable: "DNS Ping Controle Inschakelen",
+                sec_proxmox_settings: "Proxmox Cluster & Nodes",
+                cfg_proxmox_token: "Proxmox API Token",
+                cfg_proxmox_ssl: "Verifieer SSL Certificaat",
+                cfg_proxmox_timeout: "API Timeout (seconden)",
+                cfg_proxmox_nodes_list: "Proxmox Gemonitorde Nodes",
+                btn_add_node: "Node Toevoegen",
+                sec_wol_settings: "Wake-on-LAN Instellingen",
+                cfg_wol_broadcast: "WoL Broadcast IP",
+                cfg_wol_port: "WoL Poort",
+                sec_discord_settings: "Discord Notificaties",
+                cfg_discord_enable: "Discord Meldingen Inschakelen",
+                cfg_discord_url: "Webhook URL",
+                cfg_discord_user: "Bot Gebruikersnaam",
+                cfg_discord_mention: "Mention Rol/Gebruiker",
+                sec_logging_settings: "Logboek Instellingen",
+                cfg_log_level: "Log Niveau",
+                cfg_log_file: "Log Bestands pad",
+                cfg_log_bytes: "Max Bestandsgrootte (Bytes)",
+                cfg_log_backup: "Aantal Backups",
+                btn_save_config: "Configuratie Opslaan",
+                admin_actions_title: "Handmatige Beheerdersacties",
+                admin_actions_desc: "Voer test-triggers uit op geconfigureerde Proxmox nodes.",
+                btn_test_wol: "Test Wake-on-LAN Versturen",
+                btn_test_shutdown: "Test Shutdown API Versturen",
+                users_title: "Beheerdersaccounts",
+                col_username: "Gebruikersnaam",
+                col_created: "Aangemaakt op",
+                col_action: "Actie",
+                create_user_title: "Beheerder Account Aanmaken",
+                label_username: "Gebruikersnaam",
+                label_password: "Wachtwoord",
+                btn_create_account: "Account Aanmaken",
+                login_modal_title: "Admin Inloggen",
+                btn_login_submit: "Inloggen",
+                btn_delete: "Verwijderen",
+                node_name: "Node Naam",
+                node_host: "Host/IP",
+                node_mac: "MAC Adres"
+            },
+            en: {
+                demo_banner_title: "GitHub Pages Showcase Demo",
+                demo_banner_desc: "Experiment with simulated power outages, accounts, and admin settings!",
+                btn_sim_power: "Simulate Power Outage",
+                btn_restore_power: "Restore Mains Power",
+                login: "Admin Login",
+                logout: "Logout",
+                public_view: "Public View",
+                logged_in_as: "Logged in as: ",
+                tab_overview: "Dashboard Overview",
+                tab_history: "History & Logs",
+                tab_nut: "NUT Variables",
+                tab_settings: "Settings & Control",
+                tab_users: "User Accounts",
+                stat_sys_status: "SYSTEM STATUS",
+                stat_battery_charge: "BATTERY CHARGE",
+                stat_est_runtime: "ESTIMATED RUNTIME",
+                stat_load_voltage: "UPS LOAD & VOLTAGE",
+                threshold: "Threshold",
+                input_v: "Input",
+                chart_title: "Live Battery & Load Chart",
+                signal_shutdown_legend: "Shutdown Signal",
+                signal_wol_legend: "WoL Signal",
+                monitored_nodes: "Monitored Proxmox Nodes",
+                registered: "Registered",
+                event_logs_title: "System Event Logs",
+                col_timestamp: "Timestamp",
+                col_level: "Level",
+                col_message: "Message",
+                nut_variables_title: "ALL NUT UPS Variables",
+                col_nut_variable: "Variable Name",
+                col_nut_value: "Value",
+                search_nut_placeholder: "Search NUT variables...",
+                settings_title: "System Configuration",
+                sec_web_settings: "Web Server Settings",
+                cfg_web_host: "Server Host / Bind IP",
+                cfg_web_port: "Web Port",
+                sec_ups_settings: "UPS Settings (NUT)",
+                cfg_ups_name: "NUT UPS Name",
+                cfg_ups_threshold: "Battery Threshold (%)",
+                cfg_ups_poll: "Poll Interval (seconds)",
+                cfg_ups_grace: "On-Battery Grace Period (seconds)",
+                sec_startup_settings: "Startup & Conditions",
+                cfg_startup_delay: "Startup Stability Delay (seconds)",
+                cfg_battery_above: "Required Battery Above (%)",
+                cfg_inet_enable: "Enable Internet Ping Check",
+                cfg_dns_enable: "Enable DNS Ping Check",
+                sec_proxmox_settings: "Proxmox Cluster & Nodes",
+                cfg_proxmox_token: "Proxmox API Token",
+                cfg_proxmox_ssl: "Verify SSL Certificate",
+                cfg_proxmox_timeout: "API Timeout (seconds)",
+                cfg_proxmox_nodes_list: "Proxmox Monitored Nodes",
+                btn_add_node: "Add Node",
+                sec_wol_settings: "Wake-on-LAN Settings",
+                cfg_wol_broadcast: "WoL Broadcast IP",
+                cfg_wol_port: "WoL Port",
+                sec_discord_settings: "Discord Notifications",
+                cfg_discord_enable: "Enable Discord Alerts",
+                cfg_discord_url: "Webhook URL",
+                cfg_discord_user: "Bot Username",
+                cfg_discord_mention: "Mention String",
+                sec_logging_settings: "Logging Settings",
+                cfg_log_level: "Log Level",
+                cfg_log_file: "Log File Path",
+                cfg_log_bytes: "Max File Bytes",
+                cfg_log_backup: "Backup Count",
+                btn_save_config: "Save Configuration",
+                admin_actions_title: "Admin Manual Actions",
+                admin_actions_desc: "Execute test triggers on configured Proxmox nodes.",
+                btn_test_wol: "Send Test Wake-on-LAN",
+                btn_test_shutdown: "Send Test Shutdown API",
+                users_title: "Admin Accounts",
+                col_username: "Username",
+                col_created: "Created",
+                col_action: "Action",
+                create_user_title: "Create Admin User",
+                label_username: "Username",
+                label_password: "Password",
+                btn_create_account: "Create Account",
+                login_modal_title: "Admin Login",
+                btn_login_submit: "Login",
+                btn_delete: "Delete",
+                node_name: "Node Name",
+                node_host: "Host/IP",
+                node_mac: "MAC Address"
+            }
+        };
+
         document.addEventListener("DOMContentLoaded", () => {
+            document.getElementById('lang-select').value = currentLang;
+            setLanguage(currentLang);
             initChart();
             renderEvents();
+            renderNodesList();
+            renderNodeEditorRows(nodesList);
+            renderNutTable(rawNutData);
             loadUsersList();
             setInterval(updateDemoLoop, 2000);
         });
 
+        function setLanguage(lang) {
+            currentLang = lang;
+            localStorage.setItem('ups_lang', lang);
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (i18n[lang] && i18n[lang][key]) {
+                    el.innerText = i18n[lang][key];
+                }
+            });
+            const btnText = document.getElementById('sim-power-btn-text');
+            if (btnText) {
+                btnText.innerText = isPowerOnline ? i18n[lang].btn_sim_power : i18n[lang].btn_restore_power;
+            }
+            const searchInput = document.getElementById('nut-search-input');
+            if (searchInput && i18n[lang] && i18n[lang].search_nut_placeholder) {
+                searchInput.placeholder = i18n[lang].search_nut_placeholder;
+            }
+            if (authUser) {
+                document.getElementById('user-status-text').innerText = i18n[lang].logged_in_as + authUser;
+            } else {
+                document.getElementById('user-status-text').innerText = i18n[lang].public_view;
+            }
+            renderNodesList();
+        }
+
         function initChart() {
             const ctx = document.getElementById('liveChart').getContext('2d');
-            for(let i=10; i>=0; i--) {
+            for(let i=12; i>=0; i--) {
                 historyData.push({
                     time: new Date(Date.now() - i*10000).toLocaleTimeString(),
                     charge: 100,
-                    load: 15
+                    load: 15,
+                    signal: null
                 });
             }
             chart = new Chart(ctx, {
@@ -365,17 +750,53 @@
                 data: {
                     labels: historyData.map(d => d.time),
                     datasets: [
-                        { label: 'Charge %', data: historyData.map(d => d.charge), borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.1)', fill: true, tension: 0.3 },
-                        { label: 'Load %', data: historyData.map(d => d.load), borderColor: '#f59e0b', backgroundColor: 'transparent', borderDash: [5,5], tension: 0.3 }
+                        {
+                            label: 'Charge %',
+                            data: historyData.map(d => d.charge),
+                            borderColor: '#38bdf8',
+                            backgroundColor: 'rgba(56,189,248,0.12)',
+                            fill: true,
+                            tension: 0.3,
+                            pointBackgroundColor: historyData.map(() => '#38bdf8'),
+                            pointRadius: historyData.map(() => 2),
+                            pointBorderColor: '#ffffff',
+                            pointBorderWidth: 2,
+                            pointHoverRadius: 9
+                        },
+                        {
+                            label: 'Load %',
+                            data: historyData.map(d => d.load),
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'transparent',
+                            borderDash: [5,5],
+                            tension: 0.3,
+                            pointRadius: 0
+                        }
                     ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { labels: { color: '#94a3b8' } } },
+                    plugins: {
+                        legend: { labels: { color: '#cbd5e1', font: { weight: '600' } } },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) label += ': ';
+                                    if (context.parsed.y !== null) label += context.parsed.y + '%';
+                                    const rawPoint = historyData[context.dataIndex];
+                                    if (rawPoint && rawPoint.signal) {
+                                        label += ` [${rawPoint.signal} SIGNAL SENT]`;
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
                     scales: {
-                        x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
-                        y: { min: 0, max: 100, ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+                        x: { ticks: { color: '#cbd5e1' }, grid: { color: '#334155' } },
+                        y: { min: 0, max: 100, ticks: { color: '#cbd5e1' }, grid: { color: '#334155' } }
                     }
                 }
             });
@@ -384,22 +805,43 @@
         function toggleSimulatedPower() {
             isPowerOnline = !isPowerOnline;
             const btnText = document.getElementById('sim-power-btn-text');
+            const langDict = i18n[currentLang] || i18n.nl;
             if (!isPowerOnline) {
-                btnText.innerText = "Restore Mains Power";
+                btnText.innerText = langDict.btn_restore_power;
                 eventLogs.unshift({ timestamp: Date.now()/1000, level: 'WARNING', message: 'Power lost – running on battery (' + Math.round(batteryCharge) + '%)' });
             } else {
-                btnText.innerText = "Simulate Power Outage";
-                eventLogs.unshift({ timestamp: Date.now()/1000, level: 'INFO', message: 'Mains power restored' });
+                btnText.innerText = langDict.btn_sim_power;
+                eventLogs.unshift({ timestamp: Date.now()/1000, level: 'INFO', message: 'Mains power restored – starting WoL recovery' });
+                // Record WoL signal on recovery
+                recordChartSignal('WOL');
             }
             renderEvents();
         }
 
-        function updateDemoLoop() {
-            if (!isPowerOnline) {
-                batteryCharge = Math.max(10, batteryCharge - 3);
-            } else {
-                batteryCharge = Math.min(100, batteryCharge + 5);
+        function recordChartSignal(sigType) {
+            const lastPoint = historyData[historyData.length - 1];
+            if (lastPoint) {
+                lastPoint.signal = sigType;
             }
+        }
+
+        function updateDemoLoop() {
+            let currentSignal = null;
+            if (!isPowerOnline) {
+                batteryCharge = Math.max(10, batteryCharge - 4);
+                rawNutData["ups.status"] = "OB";
+                if (batteryCharge <= 50 && historyData.filter(d => d.signal === 'SHUTDOWN').length === 0) {
+                    currentSignal = 'SHUTDOWN';
+                    eventLogs.unshift({ timestamp: Date.now()/1000, level: 'CRITICAL', message: 'Battery below threshold (50%) – sent SHUTDOWN signal to all Proxmox nodes' });
+                    renderEvents();
+                }
+            } else {
+                batteryCharge = Math.min(100, batteryCharge + 6);
+                rawNutData["ups.status"] = "OL";
+            }
+
+            rawNutData["battery.charge"] = String(Math.round(batteryCharge));
+            rawNutData["battery.runtime"] = String(Math.round(batteryCharge * 36));
 
             document.getElementById('stat-charge').innerText = `${Math.round(batteryCharge)}%`;
             document.getElementById('progress-charge').style.width = `${batteryCharge}%`;
@@ -409,21 +851,68 @@
             const stateIcon = document.getElementById('state-icon');
             if (isPowerOnline) {
                 stateEl.innerText = "ONLINE";
-                stateEl.className = "badge badge-online fs-6 px-3 py-2";
-                stateIcon.className = "bi bi-shield-check fs-2 text-success";
+                stateEl.className = "badge badge-online";
+                if (stateIcon) stateIcon.className = "bi bi-shield-check fs-2 text-success";
             } else {
                 stateEl.innerText = "ON_BATTERY";
-                stateEl.className = "badge badge-battery fs-6 px-3 py-2";
-                stateIcon.className = "bi bi-exclamation-triangle-fill fs-2 text-warning";
+                stateEl.className = "badge badge-battery";
+                if (stateIcon) stateIcon.className = "bi bi-exclamation-triangle-fill fs-2 text-warning";
             }
 
             const nowStr = new Date().toLocaleTimeString();
             historyData.shift();
-            historyData.push({ time: nowStr, charge: batteryCharge, load: 15 });
+            historyData.push({ time: nowStr, charge: batteryCharge, load: 15, signal: currentSignal });
 
             chart.data.labels = historyData.map(d => d.time);
             chart.data.datasets[0].data = historyData.map(d => d.charge);
+            chart.data.datasets[0].pointBackgroundColor = historyData.map(d => {
+                if (d.signal === 'SHUTDOWN') return '#ef4444';
+                if (d.signal === 'WOL') return '#10b981';
+                return '#38bdf8';
+            });
+            chart.data.datasets[0].pointRadius = historyData.map(d => (d.signal ? 8 : 2));
+            chart.data.datasets[1].data = historyData.map(d => d.load);
             chart.update('none');
+        }
+
+        function renderNodesList() {
+            const langDict = i18n[currentLang] || i18n.nl;
+            const nodesContainer = document.getElementById('nodes-list');
+            nodesContainer.innerHTML = nodesList.map(n => `
+                <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-dark rounded border border-secondary">
+                    <div>
+                        <span class="fw-bold text-light">${n.name}</span>
+                        <div class="text-muted small">${n.host} (${n.mac})</div>
+                    </div>
+                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> ${langDict.registered}</span>
+                </div>
+            `).join('');
+        }
+
+        function renderNutTable(nutObj) {
+            const tbody = document.getElementById('nut-table-body');
+            const keys = Object.keys(nutObj).sort();
+            if (keys.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" class="text-muted text-center">No NUT variables found</td></tr>';
+                return;
+            }
+            tbody.innerHTML = keys.map(k => `
+                <tr>
+                    <td class="fw-bold text-info">${k}</td>
+                    <td><code class="text-light fs-6">${nutObj[k]}</code></td>
+                </tr>
+            `).join('');
+        }
+
+        function filterNutVariables() {
+            const query = document.getElementById('nut-search-input').value.toLowerCase();
+            const filtered = {};
+            for (const [k, v] of Object.entries(rawNutData)) {
+                if (k.toLowerCase().includes(query) || String(v).toLowerCase().includes(query)) {
+                    filtered[k] = v;
+                }
+            }
+            renderNutTable(filtered);
         }
 
         function renderEvents() {
@@ -451,7 +940,8 @@
 
         function setLoggedIn(username) {
             authUser = username;
-            document.getElementById('user-status-text').innerText = `Logged in as: ${username}`;
+            const langDict = i18n[currentLang] || i18n.nl;
+            document.getElementById('user-status-text').innerText = langDict.logged_in_as + username;
             document.getElementById('btn-login-modal').classList.add('d-none');
             document.getElementById('btn-logout').classList.remove('d-none');
             document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('d-none'));
@@ -459,7 +949,8 @@
 
         function setLoggedOut() {
             authUser = null;
-            document.getElementById('user-status-text').innerText = "Public View";
+            const langDict = i18n[currentLang] || i18n.nl;
+            document.getElementById('user-status-text').innerText = langDict.public_view;
             document.getElementById('btn-login-modal').classList.remove('d-none');
             document.getElementById('btn-logout').classList.add('d-none');
             document.querySelectorAll('.admin-only').forEach(el => el.classList.add('d-none'));
@@ -487,19 +978,91 @@
             bootstrap.Tab.getInstance(document.getElementById('tab-overview-btn')).show();
         }
 
+        function renderNodeEditorRows(nodes) {
+            const container = document.getElementById('nodes-editor-container');
+            const langDict = i18n[currentLang] || i18n.nl;
+            container.innerHTML = nodes.map((node, index) => `
+                <div class="row g-2 mb-2 align-items-center node-row">
+                    <div class="col-md-3">
+                        <input type="text" class="form-control node-name" placeholder="${langDict.node_name}" value="${node.name}" required>
+                    </div>
+                    <div class="col-md-4">
+                        <input type="text" class="form-control node-host" placeholder="${langDict.node_host}" value="${node.host}" required>
+                    </div>
+                    <div class="col-md-4">
+                        <input type="text" class="form-control node-mac" placeholder="${langDict.node_mac}" value="${node.mac}" required>
+                    </div>
+                    <div class="col-md-1">
+                        <button type="button" class="btn btn-outline-danger btn-sm w-100" onclick="removeNodeRow(this)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function addNodeRow() {
+            const container = document.getElementById('nodes-editor-container');
+            const langDict = i18n[currentLang] || i18n.nl;
+            const div = document.createElement('div');
+            div.className = 'row g-2 mb-2 align-items-center node-row';
+            div.innerHTML = `
+                <div class="col-md-3">
+                    <input type="text" class="form-control node-name" placeholder="${langDict.node_name}" value="pve-new" required>
+                </div>
+                <div class="col-md-4">
+                    <input type="text" class="form-control node-host" placeholder="${langDict.node_host}" value="192.168.1.50" required>
+                </div>
+                <div class="col-md-4">
+                    <input type="text" class="form-control node-mac" placeholder="${langDict.node_mac}" value="00:11:22:33:44:55" required>
+                </div>
+                <div class="col-md-1">
+                    <button type="button" class="btn btn-outline-danger btn-sm w-100" onclick="removeNodeRow(this)">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `;
+            container.appendChild(div);
+        }
+
+        function removeNodeRow(btn) {
+            const row = btn.closest('.node-row');
+            if (row) row.remove();
+        }
+
         function saveSettings(e) {
             e.preventDefault();
-            alert("Configuration saved successfully!");
+            const rows = document.querySelectorAll('.node-row');
+            const newNodes = [];
+            rows.forEach(r => {
+                const name = r.querySelector('.node-name').value.trim();
+                const host = r.querySelector('.node-host').value.trim();
+                const mac = r.querySelector('.node-mac').value.trim();
+                if (name && host && mac) {
+                    newNodes.push({ name, host, mac });
+                }
+            });
+            if (newNodes.length > 0) {
+                nodesList = newNodes;
+                renderNodesList();
+            }
+            alert(currentLang === 'nl' ? 'Configuratie succesvol opgeslagen!' : 'Configuration saved successfully!');
         }
 
         function triggerTestAction(action) {
-            if (!confirm(`Are you sure you want to run ${action}?`)) return;
+            const msg = currentLang === 'nl' ? `Weet u zeker dat u ${action} wilt uitvoeren?` : `Are you sure you want to run ${action}?`;
+            if (!confirm(msg)) return;
+            const sigType = action === 'test-shutdown' ? 'SHUTDOWN' : 'WOL';
+            recordChartSignal(sigType);
+            eventLogs.unshift({ timestamp: Date.now()/1000, level: 'INFO', message: `MANUAL TEST: Sent ${sigType} signal to all nodes` });
+            renderEvents();
             const resDiv = document.getElementById('action-results');
             resDiv.innerHTML = `<pre class="bg-dark text-success p-2 rounded mt-2">{\n  "pve1": true,\n  "pve2": true\n}</pre>`;
         }
 
         function loadUsersList() {
             const tbody = document.getElementById('users-table-body');
+            const langDict = i18n[currentLang] || i18n.nl;
             tbody.innerHTML = users.map(u => `
                 <tr>
                     <td>${u.id}</td>
@@ -507,7 +1070,7 @@
                     <td class="text-muted small">${u.created_at}</td>
                     <td>
                         <button class="btn btn-outline-danger btn-sm" onclick="deleteUser(${u.id})">
-                            <i class="bi bi-trash"></i> Delete
+                            <i class="bi bi-trash"></i> ${langDict.btn_delete}
                         </button>
                     </td>
                 </tr>
@@ -540,7 +1103,7 @@
             document.getElementById('new-username').value = '';
             document.getElementById('new-password').value = '';
             loadUsersList();
-            alert('User created successfully');
+            alert(currentLang === 'nl' ? 'Gebruiker aangemaakt!' : 'User created successfully');
         }
 
         function deleteUser(userId) {
@@ -550,7 +1113,8 @@
                 return;
             }
 
-            if (!confirm('Are you sure you want to delete this user?')) return;
+            const msg = currentLang === 'nl' ? 'Weet u zeker dat u deze gebruiker wilt verwijderen?' : 'Are you sure you want to delete this user?';
+            if (!confirm(msg)) return;
 
             users = users.filter(u => u.id !== userId);
             loadUsersList();

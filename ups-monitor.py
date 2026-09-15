@@ -11,24 +11,6 @@ true for a configurable delay before sending Wake-on-LAN.
 
 Includes an embedded, production-ready web dashboard powered by a light
 multithreaded HTTP server and SQLite database.
-
-Features:
-  - Embedded multithreaded HTTP server (no external heavy frameworks)
-  - SQLite persistent storage for statistics, events, sessions, and settings
-  - Public dashboard view (safe stats, battery state, node status summary, charts)
-  - Admin login & session management (PBKDF2-SHA256 password hashing, CSRF tokens, rate limiting)
-  - Full admin settings management (UPS thresholds, Proxmox nodes, WoL, Discord)
-  - Admin manual action triggers (Test Shutdown, Test WoL)
-  - User management (CLI & Web)
-  - Discord notifications
-  - Low memory & CPU overhead, optimized for Raspberry Pi 4
-
-Usage:
-  python3 ups-monitor.py                              # normal monitoring + web server mode
-  python3 ups-monitor.py --create-admin admin secret   # create an admin user
-  python3 ups-monitor.py --reset-password admin secret # reset an admin user password
-  python3 ups-monitor.py --test-shutdown              # send real shutdown commands
-  python3 ups-monitor.py --test-wol                   # send Wake-on-LAN packets
 """
 
 import sys
@@ -53,40 +35,32 @@ from typing import List, Optional, Any, Dict, Tuple
 from enum import Enum, auto
 from urllib.parse import parse_qs, urlparse
 
-# Path fallback if /opt/ups-controller is not writable
 BASE_DIR = Path("/opt/ups-controller") if Path("/opt/ups-controller").exists() else Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.yml"
 TEMPLATE_PATH = BASE_DIR / "config_template.yml"
 DB_PATH = BASE_DIR / "ups_monitor.db"
 
-# Global database lock for thread safety
 db_lock = threading.Lock()
 
-# ==============================================================================
-# Detailed configuration template
-# ==============================================================================
 CONFIG_TEMPLATE = """# ==============================================================================
 # UPS Controller - Configuration File
 # ==============================================================================
 
-# Web Dashboard Settings
 web:
   enabled: true
   host: "0.0.0.0"
   port: 8080
 
-# UPS (NUT) settings
 ups:
   name: "gembird@localhost"
   battery_threshold: 50
   poll_interval: 5
   on_battery_grace: 15
 
-# Startup behaviour (after power returns)
 startup:
   delay: 40
   conditions:
-    battery_above: null
+    battery_above: 70
     internet:
       enabled: true
       host: "1.1.1.1"
@@ -94,7 +68,6 @@ startup:
       enabled: false
       host: "google.com"
 
-# Proxmox nodes
 proxmox:
   nodes:
     - name: pve1
@@ -107,19 +80,16 @@ proxmox:
   verify_ssl: false
   timeout: 15
 
-# Wake-on-LAN
 wol:
   broadcast: "192.168.1.255"
   port: 9
 
-# Discord notifications
 discord:
   enabled: false
   webhook_url: ""
   username: "UPS Controller"
   mention: ""
 
-# Logging
 logging:
   level: INFO
   file: /var/log/ups-controller.log
@@ -139,9 +109,6 @@ class Node:
     mac: str
 
 
-# ==============================================================================
-# Database & Authentication Manager
-# ==============================================================================
 class Database:
     def __init__(self, db_file: Path = DB_PATH):
         self.db_file = db_file
@@ -183,9 +150,15 @@ class Database:
                     runtime REAL,
                     load REAL,
                     input_voltage REAL,
-                    output_voltage REAL
+                    output_voltage REAL,
+                    signal TEXT
                 )
             """)
+            try:
+                c.execute("ALTER TABLE stats ADD COLUMN signal TEXT")
+            except sqlite3.OperationalError:
+                pass
+
             c.execute("""
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -311,14 +284,14 @@ class Database:
             conn.commit()
 
     def record_stat(self, status: str, charge: Optional[float], runtime: Optional[float],
-                    load: Optional[float], in_v: Optional[float], out_v: Optional[float]):
+                    load: Optional[float], in_v: Optional[float], out_v: Optional[float],
+                    signal: Optional[str] = None):
         now = time.time()
         with db_lock, self.get_connection() as conn:
             conn.cursor().execute(
-                "INSERT INTO stats (timestamp, status, charge, runtime, load, input_voltage, output_voltage) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (now, status, charge, runtime, load, in_v, out_v)
+                "INSERT INTO stats (timestamp, status, charge, runtime, load, input_voltage, output_voltage, signal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (now, status, charge, runtime, load, in_v, out_v, signal)
             )
-            # Prune metrics older than 7 days
             conn.cursor().execute("DELETE FROM stats WHERE timestamp < ?", (now - 7 * 86400,))
             conn.commit()
 
@@ -329,7 +302,6 @@ class Database:
                 "INSERT INTO events (timestamp, level, message) VALUES (?, ?, ?)",
                 (now, level, message)
             )
-            # Retain up to 1000 events
             conn.cursor().execute("DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 1000)")
             conn.commit()
 
@@ -366,14 +338,20 @@ class Database:
             return result
 
 
-# ==============================================================================
-# Validation helpers & Config Loader
-# ==============================================================================
 def validate_mac(mac: str) -> bool:
     return bool(re.match(r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$", mac))
 
 def validate_config(config: Dict[str, Any]) -> List[str]:
     errors = []
+    if "web" in config and isinstance(config["web"], dict):
+        web = config["web"]
+        port = web.get("port")
+        if port is not None and (not isinstance(port, int) or not (1 <= port <= 65535)):
+            errors.append("web.port must be an integer between 1 and 65535")
+        host = web.get("host")
+        if host is not None and not isinstance(host, str):
+            errors.append("web.host must be a string")
+
     if "ups" not in config:
         errors.append("Missing section: 'ups'")
     else:
@@ -430,7 +408,6 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
     return errors
 
 def load_and_validate_config(db: Database) -> Dict[str, Any]:
-    # Default initial config structure
     default_config = yaml.safe_load(CONFIG_TEMPLATE)
 
     if CONFIG_PATH.exists():
@@ -442,7 +419,6 @@ def load_and_validate_config(db: Database) -> Dict[str, Any]:
         except Exception as e:
             print(f"Warning: Could not read {CONFIG_PATH}: {e}")
 
-    # Merge dynamic settings from SQLite database
     db_settings = db.load_settings()
     for key, val in db_settings.items():
         if key in default_config and isinstance(default_config[key], dict) and isinstance(val, dict):
@@ -462,9 +438,6 @@ def load_and_validate_config(db: Database) -> Dict[str, Any]:
     return default_config
 
 
-# ==============================================================================
-# UPS Controller Core Engine
-# ==============================================================================
 class UPSController:
     def __init__(self, config: dict, db: Database):
         self.cfg = config
@@ -518,6 +491,46 @@ class UPSController:
         self.db.record_event(level, message)
 
     def get_ups_status(self) -> dict:
+        mock_data = {
+            "battery.charge": "100",
+            "battery.charge.low": "20",
+            "battery.charge.warning": "50",
+            "battery.mfr.date": "2023/05/12",
+            "battery.runtime": "3600",
+            "battery.runtime.low": "300",
+            "battery.type": "PbAc",
+            "battery.voltage": "13.60",
+            "battery.voltage.nominal": "12.0",
+            "device.mfr": "Gembird",
+            "device.model": "EG-UPS-001",
+            "device.type": "ups",
+            "driver.name": "blazer_usb",
+            "driver.parameter.pollinterval": "2",
+            "driver.parameter.port": "/dev/ttyUSB0",
+            "driver.version": "2.7.4",
+            "driver.version.internal": "0.43",
+            "input.current.nominal": "2.5",
+            "input.frequency": "50.0",
+            "input.frequency.nominal": "50.0",
+            "input.voltage": "230.0",
+            "input.voltage.fault": "230.0",
+            "input.voltage.nominal": "230.0",
+            "output.frequency": "50.0",
+            "output.voltage": "230.0",
+            "ups.beeper.status": "enabled",
+            "ups.delay.shutdown": "30",
+            "ups.delay.start": "180",
+            "ups.load": "15",
+            "ups.mfr": "Gembird",
+            "ups.model": "EG-UPS-001",
+            "ups.productid": "0001",
+            "ups.realpower.nominal": "390",
+            "ups.status": "OL",
+            "ups.timer.shutdown": "-1",
+            "ups.timer.start": "-1",
+            "ups.type": "offline / line-interactive",
+            "ups.vendorid": "0665"
+        }
         try:
             result = subprocess.run(
                 ["upsc", self.cfg["ups"]["name"]],
@@ -526,15 +539,7 @@ class UPSController:
                 timeout=10,
             )
             if result.returncode != 0:
-                # Mock status if upsc fails (e.g. dev/test env without actual physical UPS)
-                return self.last_ups_data if self.last_ups_data else {
-                    "ups.status": "OL",
-                    "battery.charge": "100",
-                    "battery.runtime": "3600",
-                    "ups.load": "15",
-                    "input.voltage": "230.0",
-                    "output.voltage": "230.0"
-                }
+                return self.last_ups_data if self.last_ups_data else mock_data
 
             data = {}
             for line in result.stdout.splitlines():
@@ -545,14 +550,7 @@ class UPSController:
             return data
         except Exception as e:
             logging.debug(f"upsc execution exception: {e}")
-            return self.last_ups_data if self.last_ups_data else {
-                "ups.status": "OL",
-                "battery.charge": "100",
-                "battery.runtime": "3600",
-                "ups.load": "15",
-                "input.voltage": "230.0",
-                "output.voltage": "230.0"
-            }
+            return self.last_ups_data if self.last_ups_data else mock_data
 
     def ping(self, host: str, timeout: int = 2) -> bool:
         try:
@@ -577,13 +575,13 @@ class UPSController:
                 return False
 
         inet = conditions.get("internet", {})
-        if inet.get("enabled"):
+        if inet and inet.get("enabled"):
             host = inet.get("host", "1.1.1.1")
             if not self.ping(host):
                 return False
 
         dns = conditions.get("dns", {})
-        if dns.get("enabled"):
+        if dns and dns.get("enabled"):
             host = dns.get("host", "google.com")
             if not self.ping(host):
                 return False
@@ -672,6 +670,17 @@ class UPSController:
             self.shutdown_node(node)
             time.sleep(1)
 
+        status = self.get_ups_status()
+        self.db.record_stat(
+            status.get("ups.status", "OB"),
+            float(status.get("battery.charge", 0)),
+            float(status.get("battery.runtime", 0)),
+            float(status.get("ups.load", 0)),
+            float(status.get("input.voltage", 0)),
+            float(status.get("output.voltage", 0)),
+            signal="SHUTDOWN"
+        )
+
         self.state = State.WAITING_FOR_POWER
         self.conditions_met_since = None
 
@@ -683,6 +692,17 @@ class UPSController:
             self.wake_node(node)
             time.sleep(0.5)
 
+        status = self.get_ups_status()
+        self.db.record_stat(
+            status.get("ups.status", "OL"),
+            float(status.get("battery.charge", 100)),
+            float(status.get("battery.runtime", 3600)),
+            float(status.get("ups.load", 15)),
+            float(status.get("input.voltage", 230)),
+            float(status.get("output.voltage", 230)),
+            signal="WOL"
+        )
+
         self.state = State.ONLINE
         self.on_battery_since = None
         self.conditions_met_since = None
@@ -693,6 +713,17 @@ class UPSController:
         for node in self.nodes:
             results[node.name] = self.shutdown_node(node)
             time.sleep(0.5)
+
+        status = self.get_ups_status()
+        self.db.record_stat(
+            status.get("ups.status", "OL"),
+            float(status.get("battery.charge", 100)),
+            float(status.get("battery.runtime", 3600)),
+            float(status.get("ups.load", 15)),
+            float(status.get("input.voltage", 230)),
+            float(status.get("output.voltage", 230)),
+            signal="SHUTDOWN"
+        )
         return results
 
     def test_wol(self) -> Dict[str, Any]:
@@ -701,6 +732,17 @@ class UPSController:
         for node in self.nodes:
             results[node.name] = self.wake_node(node)
             time.sleep(0.5)
+
+        status = self.get_ups_status()
+        self.db.record_stat(
+            status.get("ups.status", "OL"),
+            float(status.get("battery.charge", 100)),
+            float(status.get("battery.runtime", 3600)),
+            float(status.get("ups.load", 15)),
+            float(status.get("input.voltage", 230)),
+            float(status.get("output.voltage", 230)),
+            signal="WOL"
+        )
         return results
 
     def run_loop(self):
@@ -786,9 +828,6 @@ class UPSController:
                 time.sleep(10)
 
 
-# ==============================================================================
-# Rate Limiter & Web Server API Request Handler
-# ==============================================================================
 class RateLimiter:
     def __init__(self, max_attempts: int = 5, window_seconds: int = 300):
         self.max_attempts = max_attempts
@@ -883,30 +922,25 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
             return {}
 
     def log_message(self, format, *args):
-        # Suppress standard HTTP request logging to avoid cluttering main logs
         pass
 
-    # ==========================================================================
-    # GET Handlers
-    # ==========================================================================
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        # Public APIs
         if path == "/api/public/stats":
             self.handle_public_stats()
+        elif path == "/api/public/nut-all":
+            self.handle_public_nut_all()
         elif path == "/api/public/history":
             self.handle_public_history()
         elif path == "/api/public/events":
             self.handle_public_events()
-        # Admin Protected APIs
         elif path == "/api/admin/config":
             session = self.authenticate_admin()
             if not session:
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
-            # Remove sensitive values if any, or present clean admin config
             self.send_json({"config": self.controller.cfg, "csrf_token": session["csrf_token"]})
         elif path == "/api/admin/users":
             session = self.authenticate_admin()
@@ -929,9 +963,6 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         else:
             self.send_json({"error": "Not Found"}, 404)
 
-    # ==========================================================================
-    # POST Handlers
-    # ==========================================================================
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -963,7 +994,6 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
             self.send_json({"success": True}, headers={"Set-Cookie": "session_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"})
             return
 
-        # All following routes require Admin Auth
         session = self.authenticate_admin()
         if not session:
             self.send_json({"error": "Unauthorized"}, 401)
@@ -1018,16 +1048,9 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         else:
             self.send_json({"error": "Not Found"}, 404)
 
-    # ==========================================================================
-    # Helper API endpoints
-    # ==========================================================================
     def handle_public_stats(self):
         ups_raw = self.controller.get_ups_status()
-
-        # Only expose non-sensitive public metrics
-        safe_nodes = [
-            {"name": n.name, "host": n.host} for n in self.controller.nodes
-        ]
+        safe_nodes = [{"name": n.name, "host": n.host, "mac": n.mac} for n in self.controller.nodes]
 
         status_code = ups_raw.get("ups.status", "UNKNOWN")
         charge = ups_raw.get("battery.charge", "N/A")
@@ -1048,11 +1071,16 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 "output_voltage": out_v,
                 "battery_threshold": self.controller.cfg["ups"]["battery_threshold"]
             },
+            "nut_all": ups_raw,
             "nodes_summary": safe_nodes,
             "startup_delay": self.controller.cfg["startup"]["delay"],
             "server_time": time.time()
         }
         self.send_json(res)
+
+    def handle_public_nut_all(self):
+        ups_raw = self.controller.get_ups_status()
+        self.send_json({"nut_variables": ups_raw})
 
     def handle_public_history(self):
         stats = self.db.get_latest_stats(60)
@@ -1063,9 +1091,6 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         self.send_json({"events": events})
 
 
-# ==============================================================================
-# Embedded Web Dashboard Frontend Single-Page Application
-# ==============================================================================
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1076,19 +1101,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
-        .card { background-color: #1e293b; border: 1px solid #334155; color: #f8fafc; border-radius: 12px; }
-        .card-header { border-bottom: 1px solid #334155; font-weight: 600; }
-        .badge-online { background-color: #10b981; color: #022c22; font-weight: 600; }
-        .badge-battery { background-color: #f59e0b; color: #451a03; font-weight: 600; }
-        .badge-waiting { background-color: #3b82f6; color: #1e3a8a; font-weight: 600; }
-        .stat-value { font-size: 2.2rem; font-weight: 700; color: #38bdf8; }
-        .nav-tabs .nav-link { color: #94a3b8; border: none; font-weight: 500; }
+        body { background-color: #0b1329; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; font-size: 0.95rem; line-height: 1.5; }
+        .card { background-color: #1e293b; border: 1px solid #475569; color: #f8fafc; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); }
+        .card-header { border-bottom: 1px solid #475569; font-weight: 600; font-size: 1.05rem; background-color: rgba(15, 23, 42, 0.4); }
+        .text-muted { color: #cbd5e1 !important; }
+        .text-subtle { color: #94a3b8 !important; }
+        .badge-online { background-color: #059669; color: #ffffff; font-weight: 600; font-size: 0.9rem; padding: 0.45em 0.8em; border-radius: 6px; }
+        .badge-battery { background-color: #d97706; color: #ffffff; font-weight: 600; font-size: 0.9rem; padding: 0.45em 0.8em; border-radius: 6px; }
+        .badge-waiting { background-color: #2563eb; color: #ffffff; font-weight: 600; font-size: 0.9rem; padding: 0.45em 0.8em; border-radius: 6px; }
+        .stat-value { font-size: 2.3rem; font-weight: 700; color: #38bdf8; letter-spacing: -0.5px; }
+        .nav-tabs { border-bottom: 2px solid #334155; }
+        .nav-tabs .nav-link { color: #cbd5e1; border: none; font-weight: 600; font-size: 0.95rem; padding: 0.65rem 1.1rem; }
         .nav-tabs .nav-link.active { color: #38bdf8; background-color: transparent; border-bottom: 3px solid #38bdf8; }
-        .form-control, .form-select { background-color: #0f172a; border: 1px solid #334155; color: #f8fafc; }
-        .form-control:focus, .form-select:focus { background-color: #0f172a; color: #f8fafc; border-color: #38bdf8; box-shadow: none; }
-        .table { color: #f8fafc; }
-        .table-dark { --bs-table-bg: #1e293b; }
+        .nav-tabs .nav-link:hover:not(.active) { color: #f8fafc; }
+        .form-control, .form-select { background-color: #0f172a; border: 1px solid #475569; color: #f8fafc; font-size: 0.95rem; }
+        .form-control:focus, .form-select:focus { background-color: #0f172a; color: #f8fafc; border-color: #38bdf8; box-shadow: 0 0 0 0.25rem rgba(56, 189, 248, 0.25); }
+        .form-label { font-weight: 600; color: #e2e8f0; margin-bottom: 0.35rem; }
+        .table { color: #f8fafc; font-size: 0.95rem; }
+        .table-dark { --bs-table-bg: #1e293b; --bs-table-border-color: #334155; }
+        .table-dark th { color: #38bdf8; font-weight: 600; background-color: #0f172a; border-bottom: 2px solid #475569; }
+        .chart-legend-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px; font-size: 0.82rem; font-weight: 600; }
+        .signal-indicator-shutdown { background-color: #ef4444; color: #ffffff; }
+        .signal-indicator-wol { background-color: #10b981; color: #ffffff; }
     </style>
 </head>
 <body>
@@ -1099,12 +1133,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <span class="fw-bold fs-4">UPS Controller</span>
             </a>
             <div class="d-flex align-items-center gap-3">
+                <select id="lang-select" class="form-select form-select-sm bg-dark text-light border-secondary" style="width: auto;" onchange="setLanguage(this.value)">
+                    <option value="nl">🇳🇱 Nederlands</option>
+                    <option value="en">🇬🇧 English</option>
+                </select>
                 <span id="user-status-text" class="text-muted small">Public View</span>
                 <button id="btn-login-modal" class="btn btn-outline-info btn-sm" onclick="openLoginModal()">
-                    <i class="bi bi-box-arrow-in-right"></i> Admin Login
+                    <i class="bi bi-box-arrow-in-right"></i> <span data-i18n="login">Admin Login</span>
                 </button>
                 <button id="btn-logout" class="btn btn-outline-danger btn-sm d-none" onclick="logout()">
-                    <i class="bi bi-box-arrow-right"></i> Logout
+                    <i class="bi bi-box-arrow-right"></i> <span data-i18n="logout">Logout</span>
                 </button>
             </div>
         </div>
@@ -1115,22 +1153,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
             <li class="nav-item">
                 <button class="nav-link active" id="tab-overview-btn" data-bs-toggle="tab" data-bs-target="#tab-overview">
-                    <i class="bi bi-speedometer2"></i> Dashboard Overview
+                    <i class="bi bi-speedometer2"></i> <span data-i18n="tab_overview">Dashboard Overview</span>
                 </button>
             </li>
             <li class="nav-item">
                 <button class="nav-link" id="tab-history-btn" data-bs-toggle="tab" data-bs-target="#tab-history">
-                    <i class="bi bi-graph-up"></i> History & Logs
+                    <i class="bi bi-graph-up"></i> <span data-i18n="tab_history">History & Logs</span>
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" id="tab-nut-btn" data-bs-toggle="tab" data-bs-target="#tab-nut">
+                    <i class="bi bi-cpu"></i> <span data-i18n="tab_nut">NUT Variables</span>
                 </button>
             </li>
             <li class="nav-item admin-only d-none">
                 <button class="nav-link" id="tab-settings-btn" data-bs-toggle="tab" data-bs-target="#tab-settings">
-                    <i class="bi bi-gear-fill"></i> Settings & Control
+                    <i class="bi bi-gear-fill"></i> <span data-i18n="tab_settings">Settings & Control</span>
                 </button>
             </li>
             <li class="nav-item admin-only d-none">
                 <button class="nav-link" id="tab-users-btn" data-bs-toggle="tab" data-bs-target="#tab-users">
-                    <i class="bi bi-people-fill"></i> User Accounts
+                    <i class="bi bi-people-fill"></i> <span data-i18n="tab_users">User Accounts</span>
                 </button>
             </li>
         </ul>
@@ -1141,16 +1184,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <div class="row g-4 mb-4">
                     <div class="col-md-3">
                         <div class="card p-3">
-                            <div class="text-muted small fw-semibold">SYSTEM STATUS</div>
+                            <div class="text-muted small fw-semibold" data-i18n="stat_sys_status">SYSTEM STATUS</div>
                             <div class="d-flex align-items-center justify-content-between mt-2">
-                                <span id="stat-state" class="badge badge-online fs-6 px-3 py-2">ONLINE</span>
-                                <i class="bi bi-shield-check fs-2 text-success"></i>
+                                <span id="stat-state" class="badge badge-online">ONLINE</span>
+                                <i id="state-icon" class="bi bi-shield-check fs-2 text-success"></i>
                             </div>
                         </div>
                     </div>
                     <div class="col-md-3">
                         <div class="card p-3">
-                            <div class="text-muted small fw-semibold">BATTERY CHARGE</div>
+                            <div class="text-muted small fw-semibold" data-i18n="stat_battery_charge">BATTERY CHARGE</div>
                             <div class="stat-value mt-1" id="stat-charge">-- %</div>
                             <div class="progress mt-2" style="height: 6px;">
                                 <div id="progress-charge" class="progress-bar bg-info" style="width: 0%"></div>
@@ -1159,16 +1202,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     </div>
                     <div class="col-md-3">
                         <div class="card p-3">
-                            <div class="text-muted small fw-semibold">ESTIMATED RUNTIME</div>
+                            <div class="text-muted small fw-semibold" data-i18n="stat_est_runtime">ESTIMATED RUNTIME</div>
                             <div class="stat-value mt-1" id="stat-runtime">-- min</div>
-                            <div class="text-muted small mt-1">Threshold: <span id="stat-threshold">--</span>%</div>
+                            <div class="text-muted small mt-1"><span data-i18n="threshold">Threshold</span>: <span id="stat-threshold">--</span>%</div>
                         </div>
                     </div>
                     <div class="col-md-3">
                         <div class="card p-3">
-                            <div class="text-muted small fw-semibold">UPS LOAD & VOLTAGE</div>
+                            <div class="text-muted small fw-semibold" data-i18n="stat_load_voltage">UPS LOAD & VOLTAGE</div>
                             <div class="stat-value mt-1" id="stat-load">-- %</div>
-                            <div class="text-muted small mt-1">Input: <span id="stat-in-v">--</span>V</div>
+                            <div class="text-muted small mt-1"><span data-i18n="input_v">Input</span>: <span id="stat-in-v">--</span>V</div>
                         </div>
                     </div>
                 </div>
@@ -1176,8 +1219,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <div class="row g-4">
                     <div class="col-lg-8">
                         <div class="card p-3">
-                            <div class="card-header bg-transparent px-0 pt-0 text-info">
-                                <i class="bi bi-activity"></i> Live Battery & Load Chart
+                            <div class="card-header bg-transparent px-0 pt-0 text-info d-flex justify-content-between align-items-center">
+                                <span><i class="bi bi-activity"></i> <span data-i18n="chart_title">Live Battery & Load Chart</span></span>
+                                <div class="d-flex gap-2">
+                                    <span class="chart-legend-badge signal-indicator-shutdown"><i class="bi bi-circle-fill fs-6"></i> <span data-i18n="signal_shutdown_legend">Shutdown Signal</span></span>
+                                    <span class="chart-legend-badge signal-indicator-wol"><i class="bi bi-circle-fill fs-6"></i> <span data-i18n="signal_wol_legend">WoL Signal</span></span>
+                                </div>
                             </div>
                             <div style="height: 280px;">
                                 <canvas id="liveChart"></canvas>
@@ -1187,7 +1234,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     <div class="col-lg-4">
                         <div class="card p-3 h-100">
                             <div class="card-header bg-transparent px-0 pt-0 text-info">
-                                <i class="bi bi-hdd-network"></i> Monitored Proxmox Nodes
+                                <i class="bi bi-hdd-network"></i> <span data-i18n="monitored_nodes">Monitored Proxmox Nodes</span>
                             </div>
                             <div id="nodes-list" class="mt-3">
                                 <div class="text-muted">Loading nodes...</div>
@@ -1201,19 +1248,42 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div class="tab-pane fade" id="tab-history">
                 <div class="card p-3">
                     <div class="card-header bg-transparent px-0 pt-0 text-info">
-                        <i class="bi bi-journal-text"></i> System Event Logs
+                        <i class="bi bi-journal-text"></i> <span data-i18n="event_logs_title">System Event Logs</span>
                     </div>
                     <div class="table-responsive mt-3">
                         <table class="table table-dark table-hover align-middle">
                             <thead>
                                 <tr>
-                                    <th>Timestamp</th>
-                                    <th>Level</th>
-                                    <th>Message</th>
+                                    <th data-i18n="col_timestamp">Timestamp</th>
+                                    <th data-i18n="col_level">Level</th>
+                                    <th data-i18n="col_message">Message</th>
                                 </tr>
                             </thead>
                             <tbody id="events-table-body">
                                 <tr><td colspan="3" class="text-muted text-center">Loading events...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- NUT VARIABLES TAB -->
+            <div class="tab-pane fade" id="tab-nut">
+                <div class="card p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="text-info mb-0"><i class="bi bi-cpu"></i> <span data-i18n="nut_variables_title">ALL NUT UPS Variables</span></h5>
+                        <input type="text" id="nut-search-input" class="form-control" style="max-width: 300px;" placeholder="Search NUT variables..." oninput="filterNutVariables()">
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-dark table-striped align-middle">
+                            <thead>
+                                <tr>
+                                    <th style="width: 45%;" data-i18n="col_nut_variable">Variable Name</th>
+                                    <th style="width: 55%;" data-i18n="col_nut_value">Value</th>
+                                </tr>
+                            </thead>
+                            <tbody id="nut-table-body">
+                                <tr><td colspan="2" class="text-muted text-center">Loading NUT variables...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -1225,57 +1295,166 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <div class="row g-4">
                     <div class="col-lg-8">
                         <div class="card p-4">
-                            <h5 class="text-info mb-3"><i class="bi bi-sliders"></i> System Configuration</h5>
+                            <h5 class="text-info mb-3"><i class="bi bi-sliders"></i> <span data-i18n="settings_title">System Configuration</span></h5>
                             <form id="settings-form" onsubmit="saveSettings(event)">
-                                <h6 class="text-warning mt-2 mb-3">UPS Settings</h6>
+
+                                <!-- Web Server Settings -->
+                                <h6 class="text-warning mt-2 mb-3"><i class="bi bi-globe"></i> <span data-i18n="sec_web_settings">Web Server Settings</span></h6>
                                 <div class="row g-3 mb-3">
                                     <div class="col-md-6">
-                                        <label class="form-label">NUT UPS Name</label>
+                                        <label class="form-label" data-i18n="cfg_web_host">Server Host / Bind IP</label>
+                                        <input type="text" id="cfg-web-host" class="form-control" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_web_port">Web Port</label>
+                                        <input type="number" id="cfg-web-port" class="form-control" min="1" max="65535" required>
+                                    </div>
+                                </div>
+
+                                <!-- UPS Settings -->
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-battery-charging"></i> <span data-i18n="sec_ups_settings">UPS Settings (NUT)</span></h6>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_ups_name">NUT UPS Name</label>
                                         <input type="text" id="cfg-ups-name" class="form-control" required>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label">Battery Threshold (%)</label>
+                                        <label class="form-label" data-i18n="cfg_ups_threshold">Battery Threshold (%)</label>
                                         <input type="number" id="cfg-ups-threshold" class="form-control" min="1" max="99" required>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label">Poll Interval (seconds)</label>
+                                        <label class="form-label" data-i18n="cfg_ups_poll">Poll Interval (seconds)</label>
                                         <input type="number" id="cfg-ups-poll" class="form-control" min="2" required>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label">On-Battery Grace Period (seconds)</label>
+                                        <label class="form-label" data-i18n="cfg_ups_grace">On-Battery Grace Period (seconds)</label>
                                         <input type="number" id="cfg-ups-grace" class="form-control" min="0" required>
                                     </div>
                                 </div>
 
-                                <h6 class="text-warning mt-4 mb-3">Startup & WoL Settings</h6>
+                                <!-- Startup & Conditions Settings -->
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-hourglass-split"></i> <span data-i18n="sec_startup_settings">Startup & Conditions</span></h6>
                                 <div class="row g-3 mb-3">
                                     <div class="col-md-6">
-                                        <label class="form-label">Startup Stability Delay (seconds)</label>
+                                        <label class="form-label" data-i18n="cfg_startup_delay">Startup Stability Delay (seconds)</label>
                                         <input type="number" id="cfg-startup-delay" class="form-control" min="0" required>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label">WoL Broadcast IP</label>
-                                        <input type="text" id="cfg-wol-broadcast" class="form-control" required>
+                                        <label class="form-label" data-i18n="cfg_battery_above">Required Battery Above (%)</label>
+                                        <input type="number" id="cfg-battery-above" class="form-control" min="0" max="100">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input" type="checkbox" id="cfg-inet-enabled">
+                                            <label class="form-check-label fw-bold" data-i18n="cfg_inet_enable">Enable Internet Ping Check</label>
+                                        </div>
+                                        <input type="text" id="cfg-inet-host" class="form-control mt-2" placeholder="e.g. 1.1.1.1">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input" type="checkbox" id="cfg-dns-enabled">
+                                            <label class="form-check-label fw-bold" data-i18n="cfg_dns_enable">Enable DNS Ping Check</label>
+                                        </div>
+                                        <input type="text" id="cfg-dns-host" class="form-control mt-2" placeholder="e.g. google.com">
                                     </div>
                                 </div>
 
-                                <h6 class="text-warning mt-4 mb-3">Discord Notifications</h6>
+                                <!-- Proxmox & Dynamic Nodes Settings -->
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-hdd-stack"></i> <span data-i18n="sec_proxmox_settings">Proxmox Cluster & Nodes</span></h6>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-12">
+                                        <label class="form-label" data-i18n="cfg_proxmox_token">Proxmox API Token</label>
+                                        <input type="text" id="cfg-proxmox-token" class="form-control" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input" type="checkbox" id="cfg-proxmox-ssl">
+                                            <label class="form-check-label fw-bold" data-i18n="cfg_proxmox_ssl">Verify SSL Certificate</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_proxmox_timeout">API Timeout (seconds)</label>
+                                        <input type="number" id="cfg-proxmox-timeout" class="form-control" min="1" required>
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <label class="form-label mb-0" data-i18n="cfg_proxmox_nodes_list">Proxmox Monitored Nodes</label>
+                                        <button type="button" class="btn btn-outline-success btn-sm" onclick="addNodeRow()">
+                                            <i class="bi bi-plus-circle"></i> <span data-i18n="btn_add_node">Add Node</span>
+                                        </button>
+                                    </div>
+                                    <div id="nodes-editor-container">
+                                        <!-- Node rows populated via JS -->
+                                    </div>
+                                </div>
+
+                                <!-- WoL Settings -->
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-broadcast"></i> <span data-i18n="sec_wol_settings">Wake-on-LAN Settings</span></h6>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_wol_broadcast">WoL Broadcast IP</label>
+                                        <input type="text" id="cfg-wol-broadcast" class="form-control" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_wol_port">WoL Port</label>
+                                        <input type="number" id="cfg-wol-port" class="form-control" min="1" max="65535" required>
+                                    </div>
+                                </div>
+
+                                <!-- Discord Settings -->
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-discord"></i> <span data-i18n="sec_discord_settings">Discord Notifications</span></h6>
                                 <div class="row g-3 mb-3">
                                     <div class="col-md-4">
-                                        <div class="form-check mt-4">
+                                        <div class="form-check mt-2">
                                             <input class="form-check-input" type="checkbox" id="cfg-discord-enabled">
-                                            <label class="form-check-label">Enable Notifications</label>
+                                            <label class="form-check-label fw-bold" data-i18n="cfg_discord_enable">Enable Discord Alerts</label>
                                         </div>
                                     </div>
                                     <div class="col-md-8">
-                                        <label class="form-label">Webhook URL</label>
+                                        <label class="form-label" data-i18n="cfg_discord_url">Webhook URL</label>
                                         <input type="text" id="cfg-discord-url" class="form-control">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_discord_user">Bot Username</label>
+                                        <input type="text" id="cfg-discord-username" class="form-control">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_discord_mention">Mention String</label>
+                                        <input type="text" id="cfg-discord-mention" class="form-control" placeholder="e.g. @everyone">
+                                    </div>
+                                </div>
+
+                                <!-- Logging Settings -->
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-file-earmark-text"></i> <span data-i18n="sec_logging_settings">Logging Settings</span></h6>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_log_level">Log Level</label>
+                                        <select id="cfg-log-level" class="form-select">
+                                            <option value="DEBUG">DEBUG</option>
+                                            <option value="INFO">INFO</option>
+                                            <option value="WARNING">WARNING</option>
+                                            <option value="ERROR">ERROR</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_log_file">Log File Path</label>
+                                        <input type="text" id="cfg-log-file" class="form-control">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_log_bytes">Max File Bytes</label>
+                                        <input type="number" id="cfg-log-bytes" class="form-control" min="1000">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_log_backup">Backup Count</label>
+                                        <input type="number" id="cfg-log-backup" class="form-control" min="0">
                                     </div>
                                 </div>
 
                                 <div class="d-flex justify-content-end mt-4">
-                                    <button type="submit" class="btn btn-info px-4">
-                                        <i class="bi bi-save"></i> Save Configuration
+                                    <button type="submit" class="btn btn-info px-4 py-2 fw-bold">
+                                        <i class="bi bi-save"></i> <span data-i18n="btn_save_config">Save Configuration</span>
                                     </button>
                                 </div>
                             </form>
@@ -1284,14 +1463,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
                     <div class="col-lg-4">
                         <div class="card p-4">
-                            <h5 class="text-warning mb-3"><i class="bi bi-tools"></i> Admin Manual Actions</h5>
-                            <p class="text-muted small">Execute test triggers on configured Proxmox nodes.</p>
+                            <h5 class="text-warning mb-3"><i class="bi bi-tools"></i> <span data-i18n="admin_actions_title">Admin Manual Actions</span></h5>
+                            <p class="text-muted small" data-i18n="admin_actions_desc">Execute test triggers on configured Proxmox nodes.</p>
                             <div class="d-grid gap-3 mt-3">
-                                <button class="btn btn-outline-warning" onclick="triggerTestAction('test-wol')">
-                                    <i class="bi bi-broadcast"></i> Send Test Wake-on-LAN
+                                <button class="btn btn-outline-warning text-start" onclick="triggerTestAction('test-wol')">
+                                    <i class="bi bi-broadcast me-2"></i> <span data-i18n="btn_test_wol">Send Test Wake-on-LAN</span>
                                 </button>
-                                <button class="btn btn-outline-danger" onclick="triggerTestAction('test-shutdown')">
-                                    <i class="bi bi-power"></i> Send Test Shutdown API
+                                <button class="btn btn-outline-danger text-start" onclick="triggerTestAction('test-shutdown')">
+                                    <i class="bi bi-power me-2"></i> <span data-i18n="btn_test_shutdown">Send Test Shutdown API</span>
                                 </button>
                             </div>
                             <div id="action-results" class="mt-3 small"></div>
@@ -1305,15 +1484,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <div class="row g-4">
                     <div class="col-md-7">
                         <div class="card p-4">
-                            <h5 class="text-info mb-3"><i class="bi bi-shield-lock"></i> Admin Accounts</h5>
+                            <h5 class="text-info mb-3"><i class="bi bi-shield-lock"></i> <span data-i18n="users_title">Admin Accounts</span></h5>
                             <div class="table-responsive">
                                 <table class="table table-dark align-middle">
                                     <thead>
                                         <tr>
                                             <th>ID</th>
-                                            <th>Username</th>
-                                            <th>Created</th>
-                                            <th>Action</th>
+                                            <th data-i18n="col_username">Username</th>
+                                            <th data-i18n="col_created">Created</th>
+                                            <th data-i18n="col_action">Action</th>
                                         </tr>
                                     </thead>
                                     <tbody id="users-table-body">
@@ -1325,18 +1504,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     </div>
                     <div class="col-md-5">
                         <div class="card p-4">
-                            <h5 class="text-info mb-3"><i class="bi bi-person-plus"></i> Create Admin User</h5>
+                            <h5 class="text-info mb-3"><i class="bi bi-person-plus"></i> <span data-i18n="create_user_title">Create Admin User</span></h5>
                             <form onsubmit="createAdminUser(event)">
                                 <div class="mb-3">
-                                    <label class="form-label">Username</label>
+                                    <label class="form-label" data-i18n="label_username">Username</label>
                                     <input type="text" id="new-username" class="form-control" required>
                                 </div>
                                 <div class="mb-3">
-                                    <label class="form-label">Password</label>
+                                    <label class="form-label" data-i18n="label_password">Password</label>
                                     <input type="password" id="new-password" class="form-control" required>
                                 </div>
-                                <button type="submit" class="btn btn-success w-100">
-                                    <i class="bi bi-check-circle"></i> Create Account
+                                <button type="submit" class="btn btn-success w-100 fw-bold">
+                                    <i class="bi bi-check-circle"></i> <span data-i18n="btn_create_account">Create Account</span>
                                 </button>
                             </form>
                         </div>
@@ -1351,21 +1530,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card p-3">
                 <div class="modal-header border-0">
-                    <h5 class="modal-title text-info"><i class="bi bi-shield-lock-fill"></i> Admin Login</h5>
+                    <h5 class="modal-title text-info"><i class="bi bi-shield-lock-fill"></i> <span data-i18n="login_modal_title">Admin Login</span></h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
                     <div id="login-error" class="alert alert-danger d-none"></div>
                     <form onsubmit="handleLogin(event)">
                         <div class="mb-3">
-                            <label class="form-label">Username</label>
+                            <label class="form-label" data-i18n="label_username">Username</label>
                             <input type="text" id="login-username" class="form-control" required autocomplete="username">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">Password</label>
+                            <label class="form-label" data-i18n="label_password">Password</label>
                             <input type="password" id="login-password" class="form-control" required autocomplete="current-password">
                         </div>
-                        <button type="submit" class="btn btn-info w-100 mt-2">Login</button>
+                        <button type="submit" class="btn btn-info w-100 mt-2 fw-bold" data-i18n="btn_login_submit">Login</button>
                     </form>
                 </div>
             </div>
@@ -1378,8 +1557,179 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         let authUser = null;
         let chart = null;
         let fullConfig = null;
+        let rawNutData = {};
+        let currentLang = localStorage.getItem('ups_lang') || 'nl';
+
+        const i18n = {
+            nl: {
+                login: "Admin Inloggen",
+                logout: "Uitloggen",
+                public_view: "Publieke Weergave",
+                logged_in_as: "Ingelogd als: ",
+                tab_overview: "Dashboard Overzicht",
+                tab_history: "Historie & Logboek",
+                tab_nut: "NUT Variabelen",
+                tab_settings: "Instellingen & Beheer",
+                tab_users: "Gebruikersaccounts",
+                stat_sys_status: "SYSTEEMSTATUS",
+                stat_battery_charge: "ACCULADING",
+                stat_est_runtime: "GESCHATTE RUNTIME",
+                stat_load_voltage: "UPS BELASTING & SPANNING",
+                threshold: "Drempelwaarde",
+                input_v: "Ingang",
+                chart_title: "Live Accu & Belasting Grafiek",
+                signal_shutdown_legend: "Shutdown Signaal",
+                signal_wol_legend: "WoL Signaal",
+                monitored_nodes: "Gemonitorde Proxmox Nodes",
+                registered: "Geregistreerd",
+                event_logs_title: "Systeem Logboek",
+                col_timestamp: "Tijdstip",
+                col_level: "Niveau",
+                col_message: "Bericht",
+                nut_variables_title: "Alle NUT UPS Variabelen",
+                col_nut_variable: "Variabele Naam",
+                col_nut_value: "Waarde",
+                search_nut_placeholder: "Zoek NUT variabelen...",
+                settings_title: "Systeem Configuratie",
+                sec_web_settings: "Web Server Instellingen",
+                cfg_web_host: "Server Host / Bind IP",
+                cfg_web_port: "Web Poort",
+                sec_ups_settings: "UPS Instellingen (NUT)",
+                cfg_ups_name: "NUT UPS Naam",
+                cfg_ups_threshold: "Accu Drempelwaarde (%)",
+                cfg_ups_poll: "Poll Interval (seconden)",
+                cfg_ups_grace: "Accu Genadewacht (seconden)",
+                sec_startup_settings: "Opstart & Voorwaarden",
+                cfg_startup_delay: "Opstart Vertraging (seconden)",
+                cfg_battery_above: "Vereiste Acculading Boven (%)",
+                cfg_inet_enable: "Internet Ping Controle Inschakelen",
+                cfg_dns_enable: "DNS Ping Controle Inschakelen",
+                sec_proxmox_settings: "Proxmox Cluster & Nodes",
+                cfg_proxmox_token: "Proxmox API Token",
+                cfg_proxmox_ssl: "Verifieer SSL Certificaat",
+                cfg_proxmox_timeout: "API Timeout (seconden)",
+                cfg_proxmox_nodes_list: "Proxmox Gemonitorde Nodes",
+                btn_add_node: "Node Toevoegen",
+                sec_wol_settings: "Wake-on-LAN Instellingen",
+                cfg_wol_broadcast: "WoL Broadcast IP",
+                cfg_wol_port: "WoL Poort",
+                sec_discord_settings: "Discord Notificaties",
+                cfg_discord_enable: "Discord Meldingen Inschakelen",
+                cfg_discord_url: "Webhook URL",
+                cfg_discord_user: "Bot Gebruikersnaam",
+                cfg_discord_mention: "Mention Rol/Gebruiker",
+                sec_logging_settings: "Logboek Instellingen",
+                cfg_log_level: "Log Niveau",
+                cfg_log_file: "Log Bestands pad",
+                cfg_log_bytes: "Max Bestandsgrootte (Bytes)",
+                cfg_log_backup: "Aantal Backups",
+                btn_save_config: "Configuratie Opslaan",
+                admin_actions_title: "Handmatige Beheerdersacties",
+                admin_actions_desc: "Voer test-triggers uit op geconfigureerde Proxmox nodes.",
+                btn_test_wol: "Test Wake-on-LAN Versturen",
+                btn_test_shutdown: "Test Shutdown API Versturen",
+                users_title: "Beheerdersaccounts",
+                col_username: "Gebruikersnaam",
+                col_created: "Aangemaakt op",
+                col_action: "Actie",
+                create_user_title: "Beheerder Account Aanmaken",
+                label_username: "Gebruikersnaam",
+                label_password: "Wachtwoord",
+                btn_create_account: "Account Aanmaken",
+                login_modal_title: "Admin Inloggen",
+                btn_login_submit: "Inloggen",
+                btn_delete: "Verwijderen",
+                node_name: "Node Naam",
+                node_host: "Host/IP",
+                node_mac: "MAC Adres"
+            },
+            en: {
+                login: "Admin Login",
+                logout: "Logout",
+                public_view: "Public View",
+                logged_in_as: "Logged in as: ",
+                tab_overview: "Dashboard Overview",
+                tab_history: "History & Logs",
+                tab_nut: "NUT Variables",
+                tab_settings: "Settings & Control",
+                tab_users: "User Accounts",
+                stat_sys_status: "SYSTEM STATUS",
+                stat_battery_charge: "BATTERY CHARGE",
+                stat_est_runtime: "ESTIMATED RUNTIME",
+                stat_load_voltage: "UPS LOAD & VOLTAGE",
+                threshold: "Threshold",
+                input_v: "Input",
+                chart_title: "Live Battery & Load Chart",
+                signal_shutdown_legend: "Shutdown Signal",
+                signal_wol_legend: "WoL Signal",
+                monitored_nodes: "Monitored Proxmox Nodes",
+                registered: "Registered",
+                event_logs_title: "System Event Logs",
+                col_timestamp: "Timestamp",
+                col_level: "Level",
+                col_message: "Message",
+                nut_variables_title: "ALL NUT UPS Variables",
+                col_nut_variable: "Variable Name",
+                col_nut_value: "Value",
+                search_nut_placeholder: "Search NUT variables...",
+                settings_title: "System Configuration",
+                sec_web_settings: "Web Server Settings",
+                cfg_web_host: "Server Host / Bind IP",
+                cfg_web_port: "Web Port",
+                sec_ups_settings: "UPS Settings (NUT)",
+                cfg_ups_name: "NUT UPS Name",
+                cfg_ups_threshold: "Battery Threshold (%)",
+                cfg_ups_poll: "Poll Interval (seconds)",
+                cfg_ups_grace: "On-Battery Grace Period (seconds)",
+                sec_startup_settings: "Startup & Conditions",
+                cfg_startup_delay: "Startup Stability Delay (seconds)",
+                cfg_battery_above: "Required Battery Above (%)",
+                cfg_inet_enable: "Enable Internet Ping Check",
+                cfg_dns_enable: "Enable DNS Ping Check",
+                sec_proxmox_settings: "Proxmox Cluster & Nodes",
+                cfg_proxmox_token: "Proxmox API Token",
+                cfg_proxmox_ssl: "Verify SSL Certificate",
+                cfg_proxmox_timeout: "API Timeout (seconds)",
+                cfg_proxmox_nodes_list: "Proxmox Monitored Nodes",
+                btn_add_node: "Add Node",
+                sec_wol_settings: "Wake-on-LAN Settings",
+                cfg_wol_broadcast: "WoL Broadcast IP",
+                cfg_wol_port: "WoL Port",
+                sec_discord_settings: "Discord Notifications",
+                cfg_discord_enable: "Enable Discord Alerts",
+                cfg_discord_url: "Webhook URL",
+                cfg_discord_user: "Bot Username",
+                cfg_discord_mention: "Mention String",
+                sec_logging_settings: "Logging Settings",
+                cfg_log_level: "Log Level",
+                cfg_log_file: "Log File Path",
+                cfg_log_bytes: "Max File Bytes",
+                cfg_log_backup: "Backup Count",
+                btn_save_config: "Save Configuration",
+                admin_actions_title: "Admin Manual Actions",
+                admin_actions_desc: "Execute test triggers on configured Proxmox nodes.",
+                btn_test_wol: "Send Test Wake-on-LAN",
+                btn_test_shutdown: "Send Test Shutdown API",
+                users_title: "Admin Accounts",
+                col_username: "Username",
+                col_created: "Created",
+                col_action: "Action",
+                create_user_title: "Create Admin User",
+                label_username: "Username",
+                label_password: "Password",
+                btn_create_account: "Create Account",
+                login_modal_title: "Admin Login",
+                btn_login_submit: "Login",
+                btn_delete: "Delete",
+                node_name: "Node Name",
+                node_host: "Host/IP",
+                node_mac: "MAC Address"
+            }
+        };
 
         document.addEventListener("DOMContentLoaded", () => {
+            document.getElementById('lang-select').value = currentLang;
+            setLanguage(currentLang);
             initChart();
             checkAuth();
             fetchPublicStats();
@@ -1388,6 +1738,26 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             setInterval(fetchPublicEvents, 10000);
         });
 
+        function setLanguage(lang) {
+            currentLang = lang;
+            localStorage.setItem('ups_lang', lang);
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (i18n[lang] && i18n[lang][key]) {
+                    el.innerText = i18n[lang][key];
+                }
+            });
+            const searchInput = document.getElementById('nut-search-input');
+            if (searchInput && i18n[lang] && i18n[lang].search_nut_placeholder) {
+                searchInput.placeholder = i18n[lang].search_nut_placeholder;
+            }
+            if (authUser) {
+                document.getElementById('user-status-text').innerText = i18n[lang].logged_in_as + authUser;
+            } else {
+                document.getElementById('user-status-text').innerText = i18n[lang].public_view;
+            }
+        }
+
         function initChart() {
             const ctx = document.getElementById('liveChart').getContext('2d');
             chart = new Chart(ctx, {
@@ -1395,17 +1765,53 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 data: {
                     labels: [],
                     datasets: [
-                        { label: 'Charge %', data: [], borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.1)', fill: true, tension: 0.3 },
-                        { label: 'Load %', data: [], borderColor: '#f59e0b', backgroundColor: 'transparent', borderDash: [5,5], tension: 0.3 }
+                        {
+                            label: 'Charge %',
+                            data: [],
+                            borderColor: '#38bdf8',
+                            backgroundColor: 'rgba(56,189,248,0.12)',
+                            fill: true,
+                            tension: 0.3,
+                            pointBackgroundColor: [],
+                            pointRadius: [],
+                            pointBorderColor: '#ffffff',
+                            pointBorderWidth: 2,
+                            pointHoverRadius: 9
+                        },
+                        {
+                            label: 'Load %',
+                            data: [],
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'transparent',
+                            borderDash: [5,5],
+                            tension: 0.3,
+                            pointRadius: 0
+                        }
                     ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { labels: { color: '#94a3b8' } } },
+                    plugins: {
+                        legend: { labels: { color: '#cbd5e1', font: { weight: '600' } } },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) label += ': ';
+                                    if (context.parsed.y !== null) label += context.parsed.y + '%';
+                                    const rawPoint = context.dataset.rawHistory ? context.dataset.rawHistory[context.dataIndex] : null;
+                                    if (rawPoint && rawPoint.signal) {
+                                        label += ` [${rawPoint.signal} SIGNAL SENT]`;
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
                     scales: {
-                        x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
-                        y: { min: 0, max: 100, ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+                        x: { ticks: { color: '#cbd5e1' }, grid: { color: '#334155' } },
+                        y: { min: 0, max: 100, ticks: { color: '#cbd5e1' }, grid: { color: '#334155' } }
                     }
                 }
             });
@@ -1426,7 +1832,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         function setLoggedIn(username, csrf) {
             authUser = username;
             csrfToken = csrf;
-            document.getElementById('user-status-text').innerText = `Logged in as: ${username}`;
+            const langDict = i18n[currentLang] || i18n.nl;
+            document.getElementById('user-status-text').innerText = langDict.logged_in_as + username;
             document.getElementById('btn-login-modal').classList.add('d-none');
             document.getElementById('btn-logout').classList.remove('d-none');
             document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('d-none'));
@@ -1436,7 +1843,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         function setLoggedOut() {
             authUser = null;
             csrfToken = "";
-            document.getElementById('user-status-text').innerText = "Public View";
+            const langDict = i18n[currentLang] || i18n.nl;
+            document.getElementById('user-status-text').innerText = langDict.public_view;
             document.getElementById('btn-login-modal').classList.remove('d-none');
             document.getElementById('btn-logout').classList.add('d-none');
             document.querySelectorAll('.admin-only').forEach(el => el.classList.add('d-none'));
@@ -1496,29 +1904,65 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 document.getElementById('stat-in-v').innerText = data.ups.input_voltage;
 
                 const stateEl = document.getElementById('stat-state');
+                const stateIcon = document.getElementById('state-icon');
                 stateEl.innerText = data.state;
                 if (data.state === 'ONLINE') {
-                    stateEl.className = 'badge badge-online fs-6 px-3 py-2';
+                    stateEl.className = 'badge badge-online';
+                    if (stateIcon) stateIcon.className = 'bi bi-shield-check fs-2 text-success';
                 } else if (data.state === 'ON_BATTERY') {
-                    stateEl.className = 'badge badge-battery fs-6 px-3 py-2';
+                    stateEl.className = 'badge badge-battery';
+                    if (stateIcon) stateIcon.className = 'bi bi-exclamation-triangle-fill fs-2 text-warning';
                 } else {
-                    stateEl.className = 'badge badge-waiting fs-6 px-3 py-2';
+                    stateEl.className = 'badge badge-waiting';
+                    if (stateIcon) stateIcon.className = 'bi bi-hourglass-split fs-2 text-info';
                 }
 
                 // Render Nodes Summary
+                const langDict = i18n[currentLang] || i18n.nl;
                 const nodesContainer = document.getElementById('nodes-list');
                 nodesContainer.innerHTML = data.nodes_summary.map(n => `
                     <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-dark rounded border border-secondary">
                         <div>
-                            <span class="fw-bold">${n.name}</span>
-                            <div class="text-muted small">${n.host}</div>
+                            <span class="fw-bold text-light">${n.name}</span>
+                            <div class="text-muted small">${n.host} (${n.mac})</div>
                         </div>
-                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> Registered</span>
+                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> ${langDict.registered}</span>
                     </div>
                 `).join('');
 
+                if (data.nut_all) {
+                    rawNutData = data.nut_all;
+                    renderNutTable(rawNutData);
+                }
+
                 fetchChartHistory();
             } catch(e) { console.error(e); }
+        }
+
+        function renderNutTable(nutObj) {
+            const tbody = document.getElementById('nut-table-body');
+            const keys = Object.keys(nutObj).sort();
+            if (keys.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" class="text-muted text-center">No NUT variables found</td></tr>';
+                return;
+            }
+            tbody.innerHTML = keys.map(k => `
+                <tr>
+                    <td class="fw-bold text-info">${k}</td>
+                    <td><code class="text-light fs-6">${nutObj[k]}</code></td>
+                </tr>
+            `).join('');
+        }
+
+        function filterNutVariables() {
+            const query = document.getElementById('nut-search-input').value.toLowerCase();
+            const filtered = {};
+            for (const [k, v] of Object.entries(rawNutData)) {
+                if (k.toLowerCase().includes(query) || String(v).toLowerCase().includes(query)) {
+                    filtered[k] = v;
+                }
+            }
+            renderNutTable(filtered);
         }
 
         async function fetchChartHistory() {
@@ -1529,8 +1973,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const charges = data.history.map(item => item.charge);
                 const loads = data.history.map(item => item.load);
 
+                const colors = [];
+                const radii = [];
+
+                data.history.forEach(item => {
+                    if (item.signal === 'SHUTDOWN') {
+                        colors.push('#ef4444');
+                        radii.push(8);
+                    } else if (item.signal === 'WOL') {
+                        colors.push('#10b981');
+                        radii.push(8);
+                    } else {
+                        colors.push('#38bdf8');
+                        radii.push(2);
+                    }
+                });
+
                 chart.data.labels = labels;
                 chart.data.datasets[0].data = charges;
+                chart.data.datasets[0].pointBackgroundColor = colors;
+                chart.data.datasets[0].pointRadius = radii;
+                chart.data.datasets[0].rawHistory = data.history;
                 chart.data.datasets[1].data = loads;
                 chart.update('none');
             } catch(e) { console.error(e); }
@@ -1564,32 +2027,178 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const data = await res.json();
                 if (data.config) {
                     fullConfig = data.config;
+
+                    document.getElementById('cfg-web-host').value = fullConfig.web ? fullConfig.web.host : '0.0.0.0';
+                    document.getElementById('cfg-web-port').value = fullConfig.web ? fullConfig.web.port : 8080;
+
                     document.getElementById('cfg-ups-name').value = fullConfig.ups.name;
                     document.getElementById('cfg-ups-threshold').value = fullConfig.ups.battery_threshold;
                     document.getElementById('cfg-ups-poll').value = fullConfig.ups.poll_interval;
                     document.getElementById('cfg-ups-grace').value = fullConfig.ups.on_battery_grace;
+
                     document.getElementById('cfg-startup-delay').value = fullConfig.startup.delay;
-                    document.getElementById('cfg-wol-broadcast').value = fullConfig.wol.broadcast;
-                    document.getElementById('cfg-discord-enabled').checked = fullConfig.discord.enabled;
-                    document.getElementById('cfg-discord-url').value = fullConfig.discord.webhook_url || '';
+                    const cond = fullConfig.startup.conditions || {};
+                    document.getElementById('cfg-battery-above').value = cond.battery_above !== null ? cond.battery_above : '';
+                    document.getElementById('cfg-inet-enabled').checked = cond.internet ? cond.internet.enabled : false;
+                    document.getElementById('cfg-inet-host').value = cond.internet ? (cond.internet.host || '') : '';
+                    document.getElementById('cfg-dns-enabled').checked = cond.dns ? cond.dns.enabled : false;
+                    document.getElementById('cfg-dns-host').value = cond.dns ? (cond.dns.host || '') : '';
+
+                    document.getElementById('cfg-proxmox-token').value = fullConfig.proxmox.api_token || '';
+                    document.getElementById('cfg-proxmox-ssl').checked = fullConfig.proxmox.verify_ssl || false;
+                    document.getElementById('cfg-proxmox-timeout').value = fullConfig.proxmox.timeout || 15;
+
+                    renderNodeEditorRows(fullConfig.proxmox.nodes || []);
+
+                    document.getElementById('cfg-wol-broadcast').value = fullConfig.wol ? fullConfig.wol.broadcast : '192.168.1.255';
+                    document.getElementById('cfg-wol-port').value = fullConfig.wol ? (fullConfig.wol.port || 9) : 9;
+
+                    document.getElementById('cfg-discord-enabled').checked = fullConfig.discord ? fullConfig.discord.enabled : false;
+                    document.getElementById('cfg-discord-url').value = fullConfig.discord ? (fullConfig.discord.webhook_url || '') : '';
+                    document.getElementById('cfg-discord-username').value = fullConfig.discord ? (fullConfig.discord.username || '') : '';
+                    document.getElementById('cfg-discord-mention').value = fullConfig.discord ? (fullConfig.discord.mention || '') : '';
+
+                    const logCfg = fullConfig.logging || {};
+                    document.getElementById('cfg-log-level').value = logCfg.level || 'INFO';
+                    document.getElementById('cfg-log-file').value = logCfg.file || '';
+                    document.getElementById('cfg-log-bytes').value = logCfg.max_bytes || 5000000;
+                    document.getElementById('cfg-log-backup').value = logCfg.backup_count || 5;
                 }
 
                 loadUsersList();
             } catch(e) { console.error(e); }
         }
 
+        function renderNodeEditorRows(nodes) {
+            const container = document.getElementById('nodes-editor-container');
+            const langDict = i18n[currentLang] || i18n.nl;
+            container.innerHTML = nodes.map((node, index) => `
+                <div class="row g-2 mb-2 align-items-center node-row">
+                    <div class="col-md-3">
+                        <input type="text" class="form-control node-name" placeholder="${langDict.node_name}" value="${node.name}" required>
+                    </div>
+                    <div class="col-md-4">
+                        <input type="text" class="form-control node-host" placeholder="${langDict.node_host}" value="${node.host}" required>
+                    </div>
+                    <div class="col-md-4">
+                        <input type="text" class="form-control node-mac" placeholder="${langDict.node_mac}" value="${node.mac}" required>
+                    </div>
+                    <div class="col-md-1">
+                        <button type="button" class="btn btn-outline-danger btn-sm w-100" onclick="removeNodeRow(this)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function addNodeRow() {
+            const container = document.getElementById('nodes-editor-container');
+            const langDict = i18n[currentLang] || i18n.nl;
+            const div = document.createElement('div');
+            div.className = 'row g-2 mb-2 align-items-center node-row';
+            div.innerHTML = `
+                <div class="col-md-3">
+                    <input type="text" class="form-control node-name" placeholder="${langDict.node_name}" value="pve-new" required>
+                </div>
+                <div class="col-md-4">
+                    <input type="text" class="form-control node-host" placeholder="${langDict.node_host}" value="192.168.1.50" required>
+                </div>
+                <div class="col-md-4">
+                    <input type="text" class="form-control node-mac" placeholder="${langDict.node_mac}" value="00:11:22:33:44:55" required>
+                </div>
+                <div class="col-md-1">
+                    <button type="button" class="btn btn-outline-danger btn-sm w-100" onclick="removeNodeRow(this)">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `;
+            container.appendChild(div);
+        }
+
+        function removeNodeRow(btn) {
+            const row = btn.closest('.node-row');
+            if (row) row.remove();
+        }
+
+        function collectNodesFromUI() {
+            const rows = document.querySelectorAll('.node-row');
+            const nodes = [];
+            rows.forEach(r => {
+                const name = r.querySelector('.node-name').value.trim();
+                const host = r.querySelector('.node-host').value.trim();
+                const mac = r.querySelector('.node-mac').value.trim();
+                if (name && host && mac) {
+                    nodes.push({ name, host, mac });
+                }
+            });
+            return nodes;
+        }
+
         async function saveSettings(e) {
             e.preventDefault();
-            if (!fullConfig) return;
+            if (!fullConfig) fullConfig = {};
 
-            fullConfig.ups.name = document.getElementById('cfg-ups-name').value;
-            fullConfig.ups.battery_threshold = parseFloat(document.getElementById('cfg-ups-threshold').value);
-            fullConfig.ups.poll_interval = parseFloat(document.getElementById('cfg-ups-poll').value);
-            fullConfig.ups.on_battery_grace = parseFloat(document.getElementById('cfg-ups-grace').value);
-            fullConfig.startup.delay = parseFloat(document.getElementById('cfg-startup-delay').value);
-            fullConfig.wol.broadcast = document.getElementById('cfg-wol-broadcast').value;
-            fullConfig.discord.enabled = document.getElementById('cfg-discord-enabled').checked;
-            fullConfig.discord.webhook_url = document.getElementById('cfg-discord-url').value;
+            fullConfig.web = {
+                enabled: true,
+                host: document.getElementById('cfg-web-host').value.trim(),
+                port: parseInt(document.getElementById('cfg-web-port').value)
+            };
+
+            fullConfig.ups = {
+                name: document.getElementById('cfg-ups-name').value.trim(),
+                battery_threshold: parseFloat(document.getElementById('cfg-ups-threshold').value),
+                poll_interval: parseFloat(document.getElementById('cfg-ups-poll').value),
+                on_battery_grace: parseFloat(document.getElementById('cfg-ups-grace').value)
+            };
+
+            const batAboveVal = document.getElementById('cfg-battery-above').value;
+            fullConfig.startup = {
+                delay: parseFloat(document.getElementById('cfg-startup-delay').value),
+                conditions: {
+                    battery_above: batAboveVal !== '' ? parseFloat(batAboveVal) : null,
+                    internet: {
+                        enabled: document.getElementById('cfg-inet-enabled').checked,
+                        host: document.getElementById('cfg-inet-host').value.trim()
+                    },
+                    dns: {
+                        enabled: document.getElementById('cfg-dns-enabled').checked,
+                        host: document.getElementById('cfg-dns-host').value.trim()
+                    }
+                }
+            };
+
+            const nodesList = collectNodesFromUI();
+            if (nodesList.length === 0) {
+                alert('At least one Proxmox node is required!');
+                return;
+            }
+
+            fullConfig.proxmox = {
+                nodes: nodesList,
+                api_token: document.getElementById('cfg-proxmox-token').value.trim(),
+                verify_ssl: document.getElementById('cfg-proxmox-ssl').checked,
+                timeout: parseInt(document.getElementById('cfg-proxmox-timeout').value)
+            };
+
+            fullConfig.wol = {
+                broadcast: document.getElementById('cfg-wol-broadcast').value.trim(),
+                port: parseInt(document.getElementById('cfg-wol-port').value)
+            };
+
+            fullConfig.discord = {
+                enabled: document.getElementById('cfg-discord-enabled').checked,
+                webhook_url: document.getElementById('cfg-discord-url').value.trim(),
+                username: document.getElementById('cfg-discord-username').value.trim(),
+                mention: document.getElementById('cfg-discord-mention').value.trim()
+            };
+
+            fullConfig.logging = {
+                level: document.getElementById('cfg-log-level').value,
+                file: document.getElementById('cfg-log-file').value.trim(),
+                max_bytes: parseInt(document.getElementById('cfg-log-bytes').value),
+                backup_count: parseInt(document.getElementById('cfg-log-backup').value)
+            };
 
             try {
                 const res = await fetch('/api/admin/config', {
@@ -1599,15 +2208,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 });
                 const data = await res.json();
                 if (res.ok && data.success) {
-                    alert('Configuration saved successfully!');
+                    alert(currentLang === 'nl' ? 'Configuratie succesvol opgeslagen!' : 'Configuration saved successfully!');
+                    fetchPublicStats();
                 } else {
-                    alert('Error saving configuration: ' + (data.error || 'Unknown error'));
+                    alert((currentLang === 'nl' ? 'Fout bij opslaan: ' : 'Error saving config: ') + (data.error || 'Unknown error'));
                 }
             } catch(err) { alert('Network error'); }
         }
 
         async function triggerTestAction(action) {
-            if (!confirm(`Are you sure you want to run ${action}?`)) return;
+            const msg = currentLang === 'nl' ? `Weet u zeker dat u ${action} wilt uitvoeren?` : `Are you sure you want to run ${action}?`;
+            if (!confirm(msg)) return;
             const resDiv = document.getElementById('action-results');
             resDiv.innerHTML = '<span class="text-warning">Running test action...</span>';
             try {
@@ -1618,6 +2229,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 });
                 const data = await res.json();
                 resDiv.innerHTML = `<pre class="bg-dark text-success p-2 rounded mt-2">${JSON.stringify(data.results, null, 2)}</pre>`;
+                fetchChartHistory();
             } catch(e) { resDiv.innerHTML = '<span class="text-danger">Action failed</span>'; }
         }
 
@@ -1626,6 +2238,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const res = await fetch('/api/admin/users');
                 const data = await res.json();
                 const tbody = document.getElementById('users-table-body');
+                const langDict = i18n[currentLang] || i18n.nl;
                 tbody.innerHTML = data.users.map(u => `
                     <tr>
                         <td>${u.id}</td>
@@ -1633,7 +2246,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         <td class="text-muted small">${u.created_at}</td>
                         <td>
                             <button class="btn btn-outline-danger btn-sm" onclick="deleteUser(${u.id})">
-                                <i class="bi bi-trash"></i> Delete
+                                <i class="bi bi-trash"></i> ${langDict.btn_delete}
                             </button>
                         </td>
                     </tr>
@@ -1653,7 +2266,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 });
                 const data = await res.json();
                 if (res.ok && data.success) {
-                    alert('User created successfully');
+                    alert(currentLang === 'nl' ? 'Gebruiker aangemaakt!' : 'User created successfully');
                     document.getElementById('new-username').value = '';
                     document.getElementById('new-password').value = '';
                     loadUsersList();
@@ -1664,7 +2277,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
 
         async function deleteUser(userId) {
-            if (!confirm('Are you sure you want to delete this user?')) return;
+            const msg = currentLang === 'nl' ? 'Weet u zeker dat u deze gebruiker wilt verwijderen?' : 'Are you sure you want to delete this user?';
+            if (!confirm(msg)) return;
             try {
                 const res = await fetch('/api/admin/users/delete', {
                     method: 'POST',
@@ -1682,12 +2296,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </script>
 </body>
 </html>
+'''
 """
 
-
-# ==============================================================================
-# Main entrypoint and CLI handling
-# ==============================================================================
 def main():
     parser = argparse.ArgumentParser(
         description="UPS Controller & Production-Ready Web Dashboard",
@@ -1719,14 +2330,13 @@ def main():
             print(f"Error: User '{username}' not found.")
         return
 
-    # Auto-create default admin account if table is empty
     if db.user_count() == 0:
         default_pass = "admin123"
         db.create_user("admin", default_pass)
         print("=" * 70)
         print("INITIAL SETUP: Created default admin account!")
-        print(f"  Username: admin")
-        print(f"  Password: {default_pass}")
+        print("  Username: admin")
+        print("  Password: " + default_pass)
         print("  PLEASE CHANGE THIS PASSWORD IMMEDIATELY AFTER LOGIN!")
         print("=" * 70)
 
@@ -1741,7 +2351,6 @@ def main():
         print("\nTest finished. Exiting.")
         return
 
-    # Web Server Configuration
     web_cfg = config.get("web", {})
     host = args.host or web_cfg.get("host", "0.0.0.0")
     port = args.port or web_cfg.get("port", 8080)
@@ -1752,9 +2361,8 @@ def main():
     server = ThreadedHTTPServer((host, port), WebDashboardHandler)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
-    logging.info(f"Web Dashboard running at http://{host}:{port}/")
+    logging.info("Web Dashboard running at http://" + str(host) + ":" + str(port) + "/")
 
-    # Start UPS Monitoring background loop
     controller.run_loop()
 
 if __name__ == "__main__":
