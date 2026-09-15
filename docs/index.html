@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>UPS Controller & Dashboard - Live Interactive Demo</title>
+    <title>UPS Monitor & Dashboard - Live Interactive Demo</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -29,7 +29,7 @@
         <div class="demo-banner d-flex align-items-center justify-content-between mb-3">
             <div>
                 <i class="bi bi-rocket-takeoff-fill me-2"></i>
-                <strong>GitHub Pages Showcase Demo</strong> — Experiment with simulated power outages and admin settings!
+                <strong>GitHub Pages Showcase Demo</strong> — Experiment with simulated power outages, accounts, and admin settings!
             </div>
             <div class="d-flex align-items-center gap-2">
                 <button class="btn btn-warning btn-sm fw-bold" onclick="toggleSimulatedPower()">
@@ -48,7 +48,7 @@
             <div class="d-flex align-items-center gap-3">
                 <span id="user-status-text" class="text-muted small">Public View</span>
                 <button id="btn-login-modal" class="btn btn-outline-info btn-sm" onclick="openLoginModal()">
-                    <i class="bi bi-box-arrow-in-right"></i> Admin Login Demo
+                    <i class="bi bi-box-arrow-in-right"></i> Admin Login
                 </button>
                 <button id="btn-logout" class="btn btn-outline-danger btn-sm d-none" onclick="logout()">
                     <i class="bi bi-box-arrow-right"></i> Logout
@@ -124,7 +124,7 @@
                     <div class="col-lg-8">
                         <div class="card p-3">
                             <div class="card-header bg-transparent px-0 pt-0 text-info">
-                                <i class="bi bi-activity"></i> Live Battery & Load Chart (Interactive Demo)
+                                <i class="bi bi-activity"></i> Live Battery & Load Chart
                             </div>
                             <div style="height: 280px;">
                                 <canvas id="liveChart"></canvas>
@@ -184,7 +184,7 @@
                 <div class="row g-4">
                     <div class="col-lg-8">
                         <div class="card p-4">
-                            <h5 class="text-info mb-3"><i class="bi bi-sliders"></i> System Configuration (Demo Mode)</h5>
+                            <h5 class="text-info mb-3"><i class="bi bi-sliders"></i> System Configuration</h5>
                             <form id="settings-form" onsubmit="saveSettings(event)">
                                 <h6 class="text-warning mt-2 mb-3">UPS Settings</h6>
                                 <div class="row g-3 mb-3">
@@ -215,6 +215,20 @@
                                     <div class="col-md-6">
                                         <label class="form-label">WoL Broadcast IP</label>
                                         <input type="text" id="cfg-wol-broadcast" class="form-control" value="192.168.1.255" required>
+                                    </div>
+                                </div>
+
+                                <h6 class="text-warning mt-4 mb-3">Discord Notifications</h6>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-4">
+                                        <div class="form-check mt-4">
+                                            <input class="form-check-input" type="checkbox" id="cfg-discord-enabled">
+                                            <label class="form-check-label">Enable Notifications</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <label class="form-label">Webhook URL</label>
+                                        <input type="text" id="cfg-discord-url" class="form-control" value="">
                                     </div>
                                 </div>
 
@@ -262,15 +276,27 @@
                                         </tr>
                                     </thead>
                                     <tbody id="users-table-body">
-                                        <tr>
-                                            <td>1</td>
-                                            <td class="fw-bold">admin</td>
-                                            <td class="text-muted small">Demo Account</td>
-                                            <td><button class="btn btn-outline-danger btn-sm" disabled>Delete</button></td>
-                                        </tr>
                                     </tbody>
                                 </table>
                             </div>
+                        </div>
+                    </div>
+                    <div class="col-md-5">
+                        <div class="card p-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-person-plus"></i> Create Admin User</h5>
+                            <form onsubmit="createAdminUser(event)">
+                                <div class="mb-3">
+                                    <label class="form-label">Username</label>
+                                    <input type="text" id="new-username" class="form-control" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Password</label>
+                                    <input type="password" id="new-password" class="form-control" required>
+                                </div>
+                                <button type="submit" class="btn btn-success w-100">
+                                    <i class="bi bi-check-circle"></i> Create Account
+                                </button>
+                            </form>
                         </div>
                     </div>
                 </div>
@@ -283,22 +309,21 @@
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card p-3">
                 <div class="modal-header border-0">
-                    <h5 class="modal-title text-info"><i class="bi bi-shield-lock-fill"></i> Admin Login (Demo)</h5>
+                    <h5 class="modal-title text-info"><i class="bi bi-shield-lock-fill"></i> Admin Login</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="text-muted small mb-3">Use demo credentials: <strong>admin</strong> / <strong>admin</strong></p>
                     <div id="login-error" class="alert alert-danger d-none"></div>
                     <form onsubmit="handleLogin(event)">
                         <div class="mb-3">
                             <label class="form-label">Username</label>
-                            <input type="text" id="login-username" class="form-control" value="admin" required>
+                            <input type="text" id="login-username" class="form-control" value="admin" required autocomplete="username">
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Password</label>
-                            <input type="password" id="login-password" class="form-control" value="admin" required>
+                            <input type="password" id="login-password" class="form-control" value="admin123" required autocomplete="current-password">
                         </div>
-                        <button type="submit" class="btn btn-info w-100 mt-2">Login Demo</button>
+                        <button type="submit" class="btn btn-info w-100 mt-2">Login</button>
                     </form>
                 </div>
             </div>
@@ -309,9 +334,12 @@
     <script>
         let isPowerOnline = true;
         let batteryCharge = 100;
-        let isLogged = false;
+        let authUser = null;
         let chart = null;
         let historyData = [];
+        let users = [
+            { id: 1, username: 'admin', password: 'admin123', created_at: new Date().toISOString().slice(0, 19).replace('T', ' ') }
+        ];
         let eventLogs = [
             { timestamp: Date.now()/1000 - 60, level: 'INFO', message: 'UPS Controller background loop started' }
         ];
@@ -319,6 +347,7 @@
         document.addEventListener("DOMContentLoaded", () => {
             initChart();
             renderEvents();
+            loadUsersList();
             setInterval(updateDemoLoop, 2000);
         });
 
@@ -399,46 +428,132 @@
 
         function renderEvents() {
             const tbody = document.getElementById('events-table-body');
-            tbody.innerHTML = eventLogs.map(ev => `
-                <tr>
-                    <td class="text-muted small">${new Date(ev.timestamp * 1000).toLocaleString()}</td>
-                    <td><span class="badge ${ev.level === 'WARNING' ? 'bg-warning text-dark' : 'bg-info text-dark'}">${ev.level}</span></td>
-                    <td>${ev.message}</td>
-                </tr>
-            `).join('');
+            tbody.innerHTML = eventLogs.map(ev => {
+                let lvlBadge = 'bg-secondary';
+                if (ev.level === 'WARNING') lvlBadge = 'bg-warning text-dark';
+                if (ev.level === 'ERROR' || ev.level === 'CRITICAL') lvlBadge = 'bg-danger';
+                if (ev.level === 'INFO') lvlBadge = 'bg-info text-dark';
+                return `
+                    <tr>
+                        <td class="text-muted small">${new Date(ev.timestamp * 1000).toLocaleString()}</td>
+                        <td><span class="badge ${lvlBadge}">${ev.level}</span></td>
+                        <td>${ev.message}</td>
+                    </tr>
+                `;
+            }).join('');
         }
 
         function openLoginModal() {
-            new bootstrap.Modal(document.getElementById('loginModal')).show();
+            const modal = new bootstrap.Modal(document.getElementById('loginModal'));
+            document.getElementById('login-error').classList.add('d-none');
+            modal.show();
         }
 
-        function handleLogin(e) {
-            e.preventDefault();
-            isLogged = true;
-            bootstrap.Modal.getInstance(document.getElementById('loginModal')).hide();
-            document.getElementById('user-status-text').innerText = "Logged in as: admin (Demo)";
+        function setLoggedIn(username) {
+            authUser = username;
+            document.getElementById('user-status-text').innerText = `Logged in as: ${username}`;
             document.getElementById('btn-login-modal').classList.add('d-none');
             document.getElementById('btn-logout').classList.remove('d-none');
             document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('d-none'));
         }
 
-        function logout() {
-            isLogged = false;
+        function setLoggedOut() {
+            authUser = null;
             document.getElementById('user-status-text').innerText = "Public View";
             document.getElementById('btn-login-modal').classList.remove('d-none');
             document.getElementById('btn-logout').classList.add('d-none');
             document.querySelectorAll('.admin-only').forEach(el => el.classList.add('d-none'));
+        }
+
+        function handleLogin(e) {
+            e.preventDefault();
+            const u = document.getElementById('login-username').value.trim();
+            const p = document.getElementById('login-password').value.trim();
+            const errDiv = document.getElementById('login-error');
+            errDiv.classList.add('d-none');
+
+            const found = users.find(user => user.username === u && user.password === p);
+            if (found) {
+                bootstrap.Modal.getInstance(document.getElementById('loginModal')).hide();
+                setLoggedIn(found.username);
+            } else {
+                errDiv.innerText = 'Invalid username or password';
+                errDiv.classList.remove('d-none');
+            }
+        }
+
+        function logout() {
+            setLoggedOut();
             bootstrap.Tab.getInstance(document.getElementById('tab-overview-btn')).show();
         }
 
         function saveSettings(e) {
             e.preventDefault();
-            alert("Demo: Settings saved successfully!");
+            alert("Configuration saved successfully!");
         }
 
         function triggerTestAction(action) {
+            if (!confirm(`Are you sure you want to run ${action}?`)) return;
             const resDiv = document.getElementById('action-results');
-            resDiv.innerHTML = `<pre class="bg-dark text-success p-2 rounded mt-2">Simulated ${action} executed successfully for [pve1, pve2]</pre>`;
+            resDiv.innerHTML = `<pre class="bg-dark text-success p-2 rounded mt-2">{\n  "pve1": true,\n  "pve2": true\n}</pre>`;
+        }
+
+        function loadUsersList() {
+            const tbody = document.getElementById('users-table-body');
+            tbody.innerHTML = users.map(u => `
+                <tr>
+                    <td>${u.id}</td>
+                    <td class="fw-bold">${u.username}</td>
+                    <td class="text-muted small">${u.created_at}</td>
+                    <td>
+                        <button class="btn btn-outline-danger btn-sm" onclick="deleteUser(${u.id})">
+                            <i class="bi bi-trash"></i> Delete
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function createAdminUser(e) {
+            e.preventDefault();
+            const u = document.getElementById('new-username').value.trim();
+            const p = document.getElementById('new-password').value.trim();
+
+            if (!u || !p) {
+                alert('Username and password required');
+                return;
+            }
+
+            if (users.some(user => user.username === u)) {
+                alert('Error: User creation failed (username may exist)');
+                return;
+            }
+
+            const newId = users.length > 0 ? Math.max(...users.map(user => user.id)) + 1 : 1;
+            users.push({
+                id: newId,
+                username: u,
+                password: p,
+                created_at: new Date().toISOString().slice(0, 19).replace('T', ' ')
+            });
+
+            document.getElementById('new-username').value = '';
+            document.getElementById('new-password').value = '';
+            loadUsersList();
+            alert('User created successfully');
+        }
+
+        function deleteUser(userId) {
+            const targetUser = users.find(u => u.id === userId);
+            if (targetUser && targetUser.username === authUser) {
+                alert('Error: Cannot delete your own active account');
+                return;
+            }
+
+            if (!confirm('Are you sure you want to delete this user?')) return;
+
+            users = users.filter(u => u.id !== userId);
+            loadUsersList();
         }
     </script>
 </body>

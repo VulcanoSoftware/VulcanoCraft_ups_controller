@@ -1721,7 +1721,7 @@ def main():
 
     # Auto-create default admin account if table is empty
     if db.user_count() == 0:
-        default_pass = "admin"
+        default_pass = "admin123"
         db.create_user("admin", default_pass)
         print("=" * 70)
         print("INITIAL SETUP: Created default admin account!")
