@@ -1222,8 +1222,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                             <div class="card-header bg-transparent px-0 pt-0 text-info d-flex justify-content-between align-items-center">
                                 <span><i class="bi bi-activity"></i> <span data-i18n="chart_title">Live Battery & Load Chart</span></span>
                                 <div class="d-flex gap-2">
-                                    <span class="chart-legend-badge signal-indicator-shutdown"><i class="bi bi-circle-fill fs-6"></i> <span data-i18n="signal_shutdown_legend">Shutdown Signal</span></span>
-                                    <span class="chart-legend-badge signal-indicator-wol"><i class="bi bi-circle-fill fs-6"></i> <span data-i18n="signal_wol_legend">WoL Signal</span></span>
+                                    <span class="chart-legend-badge signal-indicator-shutdown"><i class="bi bi-triangle-fill fs-6"></i> <span data-i18n="signal_shutdown_legend">Shutdown Packets</span></span>
+                                    <span class="chart-legend-badge signal-indicator-wol"><i class="bi bi-square-fill fs-6"></i> <span data-i18n="signal_wol_legend">WoL Packets</span></span>
                                 </div>
                             </div>
                             <div style="height: 280px;">
@@ -1304,10 +1304,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_web_host">Server Host / Bind IP</label>
                                         <input type="text" id="cfg-web-host" class="form-control" required>
+                                        <div class="form-text text-muted small" data-i18n="help_web_host">IP address the web server listens on. '0.0.0.0' allows access from any network interface.</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_web_port">Web Port</label>
                                         <input type="number" id="cfg-web-port" class="form-control" min="1" max="65535" required>
+                                        <div class="form-text text-muted small" data-i18n="help_web_port">Network port used by the web dashboard (default: 8080).</div>
                                     </div>
                                 </div>
 
@@ -1317,18 +1319,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_ups_name">NUT UPS Name</label>
                                         <input type="text" id="cfg-ups-name" class="form-control" required>
+                                        <div class="form-text text-muted small" data-i18n="help_ups_name">UPS identifier configured in Network UPS Tools (NUT), e.g. gembird@localhost.</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_ups_threshold">Battery Threshold (%)</label>
                                         <input type="number" id="cfg-ups-threshold" class="form-control" min="1" max="99" required>
+                                        <div class="form-text text-muted small" data-i18n="help_ups_threshold">When battery charge drops below this percentage during an outage, Proxmox servers will shut down automatically.</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_ups_poll">Poll Interval (seconds)</label>
                                         <input type="number" id="cfg-ups-poll" class="form-control" min="2" required>
+                                        <div class="form-text text-muted small" data-i18n="help_ups_poll">Number of seconds between each UPS status check.</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_ups_grace">On-Battery Grace Period (seconds)</label>
                                         <input type="number" id="cfg-ups-grace" class="form-control" min="0" required>
+                                        <div class="form-text text-muted small" data-i18n="help_ups_grace">Delay in seconds after power loss before checking shutdown conditions (prevents triggers on brief dips).</div>
                                     </div>
                                 </div>
 
@@ -1338,10 +1344,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_startup_delay">Startup Stability Delay (seconds)</label>
                                         <input type="number" id="cfg-startup-delay" class="form-control" min="0" required>
+                                        <div class="form-text text-muted small" data-i18n="help_startup_delay">Wait time in seconds after mains power returns and all conditions are met, before sending Wake-on-LAN packets.</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_battery_above">Required Battery Above (%)</label>
                                         <input type="number" id="cfg-battery-above" class="form-control" min="0" max="100">
+                                        <div class="form-text text-muted small" data-i18n="help_battery_above">Minimum battery percentage required before powering Proxmox servers back on.</div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-check mt-2">
@@ -1349,6 +1357,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                             <label class="form-check-label fw-bold" data-i18n="cfg_inet_enable">Enable Internet Ping Check</label>
                                         </div>
                                         <input type="text" id="cfg-inet-host" class="form-control mt-2" placeholder="e.g. 1.1.1.1">
+                                        <div class="form-text text-muted small" data-i18n="help_inet">Verifies an external IP (e.g. 1.1.1.1) is reachable. Ensures servers only wake when network/internet connection is up.</div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-check mt-2">
@@ -1356,6 +1365,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                             <label class="form-check-label fw-bold" data-i18n="cfg_dns_enable">Enable DNS Ping Check</label>
                                         </div>
                                         <input type="text" id="cfg-dns-host" class="form-control mt-2" placeholder="e.g. google.com">
+                                        <div class="form-text text-muted small" data-i18n="help_dns">Verifies domain name resolution and connectivity (e.g. google.com) to confirm working DNS.</div>
                                     </div>
                                 </div>
 
@@ -1365,16 +1375,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                     <div class="col-md-12">
                                         <label class="form-label" data-i18n="cfg_proxmox_token">Proxmox API Token</label>
                                         <input type="text" id="cfg-proxmox-token" class="form-control" required>
+                                        <div class="form-text text-muted small" data-i18n="help_proxmox_token">Proxmox VE API Token identifier and secret (format: USER@REALM!TOKENID=UUID_SECRET).</div>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-check mt-2">
                                             <input class="form-check-input" type="checkbox" id="cfg-proxmox-ssl">
                                             <label class="form-check-label fw-bold" data-i18n="cfg_proxmox_ssl">Verify SSL Certificate</label>
                                         </div>
+                                        <div class="form-text text-muted small" data-i18n="help_proxmox_ssl">Enable to validate HTTPS certificates of Proxmox VE nodes (disable if using self-signed certificates).</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_proxmox_timeout">API Timeout (seconds)</label>
                                         <input type="number" id="cfg-proxmox-timeout" class="form-control" min="1" required>
+                                        <div class="form-text text-muted small" data-i18n="help_proxmox_timeout">Maximum timeout in seconds for Proxmox API requests.</div>
                                     </div>
                                 </div>
 
@@ -1385,6 +1398,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                             <i class="bi bi-plus-circle"></i> <span data-i18n="btn_add_node">Add Node</span>
                                         </button>
                                     </div>
+                                    <div class="form-text text-muted small mb-2" data-i18n="help_proxmox_nodes">List of Proxmox servers to shut down on low battery and boot via Wake-on-LAN.</div>
                                     <div id="nodes-editor-container">
                                         <!-- Node rows populated via JS -->
                                     </div>
@@ -1396,10 +1410,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_wol_broadcast">WoL Broadcast IP</label>
                                         <input type="text" id="cfg-wol-broadcast" class="form-control" required>
+                                        <div class="form-text text-muted small" data-i18n="help_wol_broadcast">Subnet broadcast IP address where Wake-on-LAN magic packets are sent (e.g. 192.168.1.255).</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_wol_port">WoL Port</label>
                                         <input type="number" id="cfg-wol-port" class="form-control" min="1" max="65535" required>
+                                        <div class="form-text text-muted small" data-i18n="help_wol_port">UDP port used for Wake-on-LAN magic packets (default: port 9).</div>
                                     </div>
                                 </div>
 
@@ -1411,6 +1427,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                             <input class="form-check-input" type="checkbox" id="cfg-discord-enabled">
                                             <label class="form-check-label fw-bold" data-i18n="cfg_discord_enable">Enable Discord Alerts</label>
                                         </div>
+                                        <div class="form-text text-muted small" data-i18n="help_discord">Send automated alerts to a Discord channel on power loss, server shutdown, or Wake-on-LAN startup.</div>
                                     </div>
                                     <div class="col-md-8">
                                         <label class="form-label" data-i18n="cfg_discord_url">Webhook URL</label>
@@ -1437,6 +1454,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                             <option value="WARNING">WARNING</option>
                                             <option value="ERROR">ERROR</option>
                                         </select>
+                                        <div class="form-text text-muted small" data-i18n="help_logging">Configuration for storing system event logs in a local log file.</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label" data-i18n="cfg_log_file">Log File Path</label>
@@ -1641,7 +1659,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 btn_delete: "Verwijderen",
                 node_name: "Node Naam",
                 node_host: "Host/IP",
-                node_mac: "MAC Adres"
+                node_mac: "MAC Adres",
+                help_web_host: "IP-adres waarop de webserver luistert. '0.0.0.0' staat toegang vanaf elke netwerkinterface toe.",
+                help_web_port: "Netwerkpoort voor het web-dashboard (standaard: 8080).",
+                help_ups_name: "Naam van de UPS in Network UPS Tools (NUT), bijv. gembird@localhost.",
+                help_ups_threshold: "Wanneer de accu bij stroomuitval onder dit percentage zakt, worden Proxmox-servers automatisch uitgeschakeld.",
+                help_ups_poll: "Aantal seconden tussen elke statuscontrole van de UPS.",
+                help_ups_grace: "Wachttijd in seconden na stroomuitval voordat shutdowns worden overwogen (voorkomt actie bij korte dippen).",
+                help_startup_delay: "Wachttijd in seconden nadat netspanning is teruggekeerd en alle voorwaarden voldaan zijn, voordat Wake-on-LAN wordt gestuurd.",
+                help_battery_above: "Minimaal vereist accupercentage voordat Proxmox-servers weer mogen inschakelen.",
+                help_inet: "Controleert of een extern IP (bijv. 1.1.1.1) bereikbaar is. Zorgt dat servers pas opstarten als het netwerk/internet online is.",
+                help_dns: "Controleert domeinnaamresolutie en verbinding (bijv. google.com) om te verifiëren dat DNS werkt.",
+                help_proxmox_token: "Proxmox VE API Token identificatie en geheim (formaat: GEBRUIKER@REALM!TOKENID=UUID_SECRET).",
+                help_proxmox_ssl: "Schakel in om HTTPS-certificaten van Proxmox VE nodes te valideren (uitschakelen bij zelfondertekende certificaten).",
+                help_proxmox_timeout: "Maximale wachttijd in seconden voor Proxmox API-aanvragen.",
+                help_proxmox_nodes: "Lijst met Proxmox-servers die bij lage accu worden uitgeschakeld en via Wake-on-LAN weer worden ingeschakeld.",
+                help_wol_broadcast: "Subnet broadcast IP-adres waarnaar Wake-on-LAN magic packets worden verzonden (bijv. 192.168.1.255).",
+                help_wol_port: "UDP-poort voor Wake-on-LAN magic packets (standaard: poort 9).",
+                help_discord: "Stuur automatische meldingen naar een Discord-kanaal bij stroomuitval, server-shutdown of Wake-on-LAN opstart.",
+                help_logging: "Instellingen voor het opslaan van logboeken in een lokaal logbestand."
             },
             en: {
                 login: "Admin Login",
@@ -1723,7 +1759,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 btn_delete: "Delete",
                 node_name: "Node Name",
                 node_host: "Host/IP",
-                node_mac: "MAC Address"
+                node_mac: "MAC Address",
+                help_web_host: "IP address the web server listens on. '0.0.0.0' allows access from any network interface.",
+                help_web_port: "Network port used by the web dashboard (default: 8080).",
+                help_ups_name: "UPS identifier configured in Network UPS Tools (NUT), e.g. gembird@localhost.",
+                help_ups_threshold: "When battery charge drops below this percentage during an outage, Proxmox servers will shut down automatically.",
+                help_ups_poll: "Number of seconds between each UPS status check.",
+                help_ups_grace: "Delay in seconds after power loss before checking shutdown conditions (prevents triggers on brief dips).",
+                help_startup_delay: "Wait time in seconds after mains power returns and all conditions are met, before sending Wake-on-LAN packets.",
+                help_battery_above: "Minimum battery percentage required before powering Proxmox servers back on.",
+                help_inet: "Verifies an external IP (e.g. 1.1.1.1) is reachable. Ensures servers only wake when network/internet connection is up.",
+                help_dns: "Verifies domain name resolution and connectivity (e.g. google.com) to confirm working DNS.",
+                help_proxmox_token: "Proxmox VE API Token identifier and secret (format: USER@REALM!TOKENID=UUID_SECRET).",
+                help_proxmox_ssl: "Enable to validate HTTPS certificates of Proxmox VE nodes (disable if using self-signed certificates).",
+                help_proxmox_timeout: "Maximum timeout in seconds for Proxmox API requests.",
+                help_proxmox_nodes: "List of Proxmox servers to shut down on low battery and boot via Wake-on-LAN.",
+                help_wol_broadcast: "Subnet broadcast IP address where Wake-on-LAN magic packets are sent (e.g. 192.168.1.255).",
+                help_wol_port: "UDP port used for Wake-on-LAN magic packets (default: port 9).",
+                help_discord: "Send automated alerts to a Discord channel on power loss, server shutdown, or Wake-on-LAN startup.",
+                help_logging: "Configuration for storing system event logs in a local log file."
             }
         };
 
@@ -1773,10 +1827,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                             fill: true,
                             tension: 0.3,
                             pointBackgroundColor: [],
+                            pointStyle: [],
                             pointRadius: [],
                             pointBorderColor: '#ffffff',
                             pointBorderWidth: 2,
-                            pointHoverRadius: 9
+                            pointHoverRadius: 10
                         },
                         {
                             label: 'Load %',
@@ -1802,7 +1857,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                     if (context.parsed.y !== null) label += context.parsed.y + '%';
                                     const rawPoint = context.dataset.rawHistory ? context.dataset.rawHistory[context.dataIndex] : null;
                                     if (rawPoint && rawPoint.signal) {
-                                        label += ` [${rawPoint.signal} SIGNAL SENT]`;
+                                        if (rawPoint.signal === 'SHUTDOWN') {
+                                            label += ' ⚠️ [SHUTDOWN PACKETS SENT]';
+                                        } else if (rawPoint.signal === 'WOL') {
+                                            label += ' ⚡ [WAKE-ON-LAN PACKETS SENT]';
+                                        } else {
+                                            label += ` [${rawPoint.signal} SIGNAL SENT]`;
+                                        }
                                     }
                                     return label;
                                 }
@@ -1974,17 +2035,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const loads = data.history.map(item => item.load);
 
                 const colors = [];
+                const styles = [];
                 const radii = [];
 
                 data.history.forEach(item => {
                     if (item.signal === 'SHUTDOWN') {
                         colors.push('#ef4444');
-                        radii.push(8);
+                        styles.push('triangle');
+                        radii.push(10);
                     } else if (item.signal === 'WOL') {
                         colors.push('#10b981');
-                        radii.push(8);
+                        styles.push('rectRot');
+                        radii.push(10);
                     } else {
                         colors.push('#38bdf8');
+                        styles.push('circle');
                         radii.push(2);
                     }
                 });
@@ -1992,6 +2057,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 chart.data.labels = labels;
                 chart.data.datasets[0].data = charges;
                 chart.data.datasets[0].pointBackgroundColor = colors;
+                chart.data.datasets[0].pointStyle = styles;
                 chart.data.datasets[0].pointRadius = radii;
                 chart.data.datasets[0].rawHistory = data.history;
                 chart.data.datasets[1].data = loads;
