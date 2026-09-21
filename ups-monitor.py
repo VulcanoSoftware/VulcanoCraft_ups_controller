@@ -84,6 +84,9 @@ wol:
   broadcast: "192.168.1.255"
   port: 9
 
+database:
+  retention_days: 7
+
 discord:
   enabled: false
   webhook_url: ""
@@ -285,23 +288,26 @@ class Database:
 
     def record_stat(self, status: str, charge: Optional[float], runtime: Optional[float],
                     load: Optional[float], in_v: Optional[float], out_v: Optional[float],
-                    signal: Optional[str] = None):
+                    signal: Optional[str] = None, retention_days: int = 7):
         now = time.time()
         with db_lock, self.get_connection() as conn:
             conn.cursor().execute(
                 "INSERT INTO stats (timestamp, status, charge, runtime, load, input_voltage, output_voltage, signal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (now, status, charge, runtime, load, in_v, out_v, signal)
             )
-            conn.cursor().execute("DELETE FROM stats WHERE timestamp < ?", (now - 7 * 86400,))
+            if retention_days > 0:
+                conn.cursor().execute("DELETE FROM stats WHERE timestamp < ?", (now - retention_days * 86400,))
             conn.commit()
 
-    def record_event(self, level: str, message: str):
+    def record_event(self, level: str, message: str, retention_days: int = 7):
         now = time.time()
         with db_lock, self.get_connection() as conn:
             conn.cursor().execute(
                 "INSERT INTO events (timestamp, level, message) VALUES (?, ?, ?)",
                 (now, level, message)
             )
+            if retention_days > 0:
+                conn.cursor().execute("DELETE FROM events WHERE timestamp < ?", (now - retention_days * 86400,))
             conn.cursor().execute("DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 1000)")
             conn.commit()
 
@@ -351,6 +357,12 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
         host = web.get("host")
         if host is not None and not isinstance(host, str):
             errors.append("web.host must be a string")
+
+    if "database" in config and isinstance(config["database"], dict):
+        db_cfg = config["database"]
+        retention = db_cfg.get("retention_days")
+        if retention is not None and (not isinstance(retention, int) or retention < 0):
+            errors.append("database.retention_days must be an integer >= 0")
 
     if "ups" not in config:
         errors.append("Missing section: 'ups'")
@@ -488,7 +500,14 @@ class UPSController:
             logging.error(message)
         else:
             logging.info(message)
-        self.db.record_event(level, message)
+        retention = self.cfg.get("database", {}).get("retention_days", 7)
+        self.db.record_event(level, message, retention_days=retention)
+
+    def record_stat(self, status: str, charge: Optional[float], runtime: Optional[float],
+                    load: Optional[float], in_v: Optional[float], out_v: Optional[float],
+                    signal: Optional[str] = None):
+        retention = self.cfg.get("database", {}).get("retention_days", 7)
+        self.db.record_stat(status, charge, runtime, load, in_v, out_v, signal, retention_days=retention)
 
     def get_ups_status(self) -> dict:
         mock_data = {
@@ -671,7 +690,7 @@ class UPSController:
             time.sleep(1)
 
         status = self.get_ups_status()
-        self.db.record_stat(
+        self.record_stat(
             status.get("ups.status", "OB"),
             float(status.get("battery.charge", 0)),
             float(status.get("battery.runtime", 0)),
@@ -693,7 +712,7 @@ class UPSController:
             time.sleep(0.5)
 
         status = self.get_ups_status()
-        self.db.record_stat(
+        self.record_stat(
             status.get("ups.status", "OL"),
             float(status.get("battery.charge", 100)),
             float(status.get("battery.runtime", 3600)),
@@ -715,7 +734,7 @@ class UPSController:
             time.sleep(0.5)
 
         status = self.get_ups_status()
-        self.db.record_stat(
+        self.record_stat(
             status.get("ups.status", "OL"),
             float(status.get("battery.charge", 100)),
             float(status.get("battery.runtime", 3600)),
@@ -734,7 +753,7 @@ class UPSController:
             time.sleep(0.5)
 
         status = self.get_ups_status()
-        self.db.record_stat(
+        self.record_stat(
             status.get("ups.status", "OL"),
             float(status.get("battery.charge", 100)),
             float(status.get("battery.runtime", 3600)),
@@ -777,7 +796,7 @@ class UPSController:
                     except (ValueError, TypeError):
                         out_v = 0.0
 
-                    self.db.record_stat(ups_status, charge, runtime, load, in_v, out_v)
+                    self.record_stat(ups_status, charge, runtime, load, in_v, out_v)
 
                     on_battery = "OB" in ups_status
                     online = "OL" in ups_status
@@ -880,6 +899,18 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_static_file(self, file_path: Path, content_type: str = "image/png"):
+        if not file_path.exists() or not file_path.is_file():
+            self.send_json({"error": "Not Found"}, 404)
+            return
+        body = file_path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_security_headers(self):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -960,6 +991,10 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 self.send_json({"authenticated": False})
         elif path in ("/", "/index.html"):
             self.send_html(DASHBOARD_HTML)
+        elif path.startswith("/img/"):
+            filename = Path(path).name
+            file_path = BASE_DIR / "img" / filename
+            self.send_static_file(file_path, "image/png")
         else:
             self.send_json({"error": "Not Found"}, 404)
 
@@ -1133,10 +1168,24 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <span class="fw-bold fs-4">UPS Controller</span>
             </a>
             <div class="d-flex align-items-center gap-3">
-                <select id="lang-select" class="form-select form-select-sm bg-dark text-light border-secondary" style="width: auto;" onchange="setLanguage(this.value)">
-                    <option value="nl">🇳🇱 Nederlands</option>
-                    <option value="en">🇬🇧 English</option>
-                </select>
+                <div class="dropdown">
+                    <button class="btn btn-dark btn-sm dropdown-toggle border-secondary d-flex align-items-center gap-2" type="button" id="langDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                        <img id="current-lang-flag" src="img/netherlands.png" alt="Flag" style="width: 20px; height: 14px; object-fit: cover; border-radius: 2px;">
+                        <span id="current-lang-text">Nederlands</span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow" aria-labelledby="langDropdown">
+                        <li>
+                            <a class="dropdown-item d-flex align-items-center gap-2" href="#" onclick="setLanguage('nl'); return false;">
+                                <img src="img/netherlands.png" alt="NL" style="width: 20px; height: 14px; object-fit: cover; border-radius: 2px;"> Nederlands
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item d-flex align-items-center gap-2" href="#" onclick="setLanguage('en'); return false;">
+                                <img src="img/uk.png" alt="EN" style="width: 20px; height: 14px; object-fit: cover; border-radius: 2px;"> English
+                            </a>
+                        </li>
+                    </ul>
+                </div>
                 <span id="user-status-text" class="text-muted small">Public View</span>
                 <button id="btn-login-modal" class="btn btn-outline-info btn-sm" onclick="openLoginModal()">
                     <i class="bi bi-box-arrow-in-right"></i> <span data-i18n="login">Admin Login</span>
@@ -1443,6 +1492,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                     </div>
                                 </div>
 
+                                <!-- Database Settings -->
+                                <h6 class="text-warning mt-4 mb-3"><i class="bi bi-database"></i> <span data-i18n="sec_database_settings">Database & Storage Settings</span></h6>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label" data-i18n="cfg_db_retention">Database Retention Policy (days)</label>
+                                        <input type="number" id="cfg-db-retention" class="form-control" min="0" required>
+                                        <div class="form-text text-muted small" data-i18n="help_db_retention">Number of days historical stats and event logs are kept in the SQLite database. Set to 0 for unlimited retention.</div>
+                                    </div>
+                                </div>
+
                                 <!-- Logging Settings -->
                                 <h6 class="text-warning mt-4 mb-3"><i class="bi bi-file-earmark-text"></i> <span data-i18n="sec_logging_settings">Logging Settings</span></h6>
                                 <div class="row g-3 mb-3">
@@ -1636,6 +1695,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 cfg_discord_url: "Webhook URL",
                 cfg_discord_user: "Bot Gebruikersnaam",
                 cfg_discord_mention: "Mention Rol/Gebruiker",
+                sec_database_settings: "Database & Opslag Instellingen",
+                cfg_db_retention: "Database Retentie Beleid (dagen)",
+                help_db_retention: "Aantal dagen dat historische statistieken en logboekevents in de SQLite database bewaard blijven. Vul 0 in voor onbeperkte bewaartermijn.",
                 sec_logging_settings: "Logboek Instellingen",
                 cfg_log_level: "Log Niveau",
                 cfg_log_file: "Log Bestands pad",
@@ -1736,6 +1798,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 cfg_discord_url: "Webhook URL",
                 cfg_discord_user: "Bot Username",
                 cfg_discord_mention: "Mention String",
+                sec_database_settings: "Database & Storage Settings",
+                cfg_db_retention: "Database Retention Policy (days)",
+                help_db_retention: "Number of days historical stats and event logs are kept in the SQLite database. Set to 0 for unlimited retention.",
                 sec_logging_settings: "Logging Settings",
                 cfg_log_level: "Log Level",
                 cfg_log_file: "Log File Path",
@@ -1782,7 +1847,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         };
 
         document.addEventListener("DOMContentLoaded", () => {
-            document.getElementById('lang-select').value = currentLang;
             setLanguage(currentLang);
             initChart();
             checkAuth();
@@ -1795,6 +1859,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         function setLanguage(lang) {
             currentLang = lang;
             localStorage.setItem('ups_lang', lang);
+            const flagImg = document.getElementById('current-lang-flag');
+            const flagText = document.getElementById('current-lang-text');
+            if (flagImg && flagText) {
+                if (lang === 'en') {
+                    flagImg.src = 'img/uk.png';
+                    flagText.innerText = 'English';
+                } else {
+                    flagImg.src = 'img/netherlands.png';
+                    flagText.innerText = 'Nederlands';
+                }
+            }
             document.querySelectorAll('[data-i18n]').forEach(el => {
                 const key = el.getAttribute('data-i18n');
                 if (i18n[lang] && i18n[lang][key]) {
@@ -2124,6 +2199,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     document.getElementById('cfg-discord-username').value = fullConfig.discord ? (fullConfig.discord.username || '') : '';
                     document.getElementById('cfg-discord-mention').value = fullConfig.discord ? (fullConfig.discord.mention || '') : '';
 
+                    const dbCfg = fullConfig.database || {};
+                    document.getElementById('cfg-db-retention').value = dbCfg.retention_days !== undefined ? dbCfg.retention_days : 7;
+
                     const logCfg = fullConfig.logging || {};
                     document.getElementById('cfg-log-level').value = logCfg.level || 'INFO';
                     document.getElementById('cfg-log-file').value = logCfg.file || '';
@@ -2257,6 +2335,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 webhook_url: document.getElementById('cfg-discord-url').value.trim(),
                 username: document.getElementById('cfg-discord-username').value.trim(),
                 mention: document.getElementById('cfg-discord-mention').value.trim()
+            };
+
+            fullConfig.database = {
+                retention_days: parseInt(document.getElementById('cfg-db-retention').value) || 0
             };
 
             fullConfig.logging = {
