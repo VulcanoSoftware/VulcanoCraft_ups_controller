@@ -1,55 +1,57 @@
-# UPS Controller & Web Dashboard for Proxmox
+# ⚡ UPS Controller & Web Dashboard for Proxmox VE
 
-Een lichtgewicht, productie-klare UPS monitoring oplossing en webgebaseerd dashboard speciaal ontworpen voor Proxmox VE servers, geoptimaliseerd om te draaien op een Raspberry Pi 4.
+A lightweight, production-ready UPS monitoring solution and embedded web dashboard specifically designed for Proxmox VE hypervisors, optimized to run seamlessly on a Raspberry Pi 4 or any Linux machine.
 
-![UPS Controller Showcase](https://img.shields.io/badge/Status-Production%20Ready-success)
+![Status](https://img.shields.io/badge/Status-Production%20Ready-success)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![SQLite](https://img.shields.io/badge/Database-SQLite3-lightgrey)
+![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
 
-## ⚡ Key Features
+## 🚀 Key Features
 
-- **Geen Docker of zware frameworks**: 100% ingebouwde Python multithreaded HTTP-server & SQLite database voor een minimaal geheugen- en CPU-gebruik.
-- **NUT (Network UPS Tools) integratie**: Houdt continu de status, acculading, runtime en spanningen van je UPS in de gaten.
-- **Automatische Proxmox Shutdown**: Schakelt netjes alle geconfigureerde Proxmox VE nodes uit via de officiële Proxmox API wanneer de UPS acculading onder een ingestelde drempel komt.
-- **Slimme Wake-on-LAN (WoL)**: Stuurt pas WoL magic packets wanneer de netspanning is teruggekeerd én alle ingestelde voorwaarden (bijv. stabiele internet-/DNS-verbinding of acculading) continu zijn voldaan gedurende een instelbare vertraging.
-- **Web Dashboard**:
-  - **Publieke weergave (Niet ingelogd)**: Toont uitsluitend veilige statistieken (acculading %, netstatus, spanningen, historische grafieken, event-logboek, node-samenvatting).
-  - **Beheerderspaneel (Admin)**: Beveiligd met PBKDF2-SHA256 wachtwoord-hashing, sessietokens en CSRF-beveiliging. Hiermee pas je instellingen aan, beheer je admin-accounts en voer je handmatig testacties uit.
-- **Discord Notificaties**: Ontvang direct meldingen bij stroomuitval, het starten van shutdowns of het versturen van WoL packets.
+- **Zero Heavy Frameworks or Docker**: Uses Python's built-in multithreaded HTTP server and SQLite database for ultra-low CPU and RAM footprint.
+- **NUT (Network UPS Tools) Integration**: Continuously tracks battery charge, estimated runtime, load percentage, input/output voltages, and status codes.
+- **Automated Proxmox Shutdown**: Gracefully initiates node shutdown via the official Proxmox VE API when battery level drops below your configured threshold during a power outage.
+- **Smart Wake-on-LAN (WoL)**: Automatically wakes Proxmox servers once utility power returns and configured stability conditions (e.g. required battery level, internet ping, or DNS resolution) stay continuously met for a specified delay timer.
+- **Responsive Web Dashboard**:
+  - **Public View**: Displays real-time status, line voltages, interactive Chart.js battery/load graphs, event logs, and monitored node status without exposing sensitive settings.
+  - **Admin Control Panel**: Protected by PBKDF2-SHA256 password hashing, secure session tokens, rate limiting, and CSRF validation. Allows full config updates, admin user management, and manual test triggers directly from the UI.
+- **Discord Webhook Alerts**: Real-time notifications sent to your Discord channel on power outages, node shutdowns, or WoL startup triggers.
 
 ---
 
-## 🚀 Live Demo / Showcase
+## 🌐 Live Interactive Demo
 
-Probeer de virtuele online showcase op GitHub Pages:
+Test the interactive dashboard showcase hosted on GitHub Pages:
 👉 **[UPS Controller Live Demo](https://vulcanosoftware.github.io/VulcanoCraft_ups_controller/)**
 
-> **Standard inloggegevens voor de demo / eerste opstart:**
-> - **Gebruikersnaam**: `admin`
-> - **Wachtwoord**: `admin123`
+> **Default Admin Credentials (for demo and initial setup):**
+> - **Username**: `admin`
+> - **Password**: `admin123`
 
 ---
 
-## 🛠️ Installatie op Raspberry Pi 4
+## 📦 Installation Guide
 
-### 1. Vereisten installeren
+### 1. Install Prerequisites
+Install required system packages and Python libraries:
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-pip nut wakeonlan
 pip3 install pyyaml requests
 ```
 
-### 2. Bestanden plaatsen
+### 2. Download and Set Up Application Directory
 ```bash
 sudo mkdir -p /opt/ups-controller
 sudo cp ups-monitor.py /opt/ups-controller/
 cd /opt/ups-controller
 ```
 
-### 3. Configuratie aanmaken (`config.yml`)
-Kopieer de template en pas deze aan naar jouw wensen:
+### 3. Create Configuration File (`config.yml`)
+Create a `config.yml` file in the working directory:
 ```bash
 cp config_template.yml config.yml
 nano config.yml
@@ -57,7 +59,7 @@ nano config.yml
 
 ---
 
-## ⚙️ Configuratie Voorbeeld (`config.yml`)
+## ⚙️ Configuration Example (`config.yml`)
 
 ```yaml
 web:
@@ -66,78 +68,130 @@ web:
   port: 8080
 
 ups:
-  name: "gembird@localhost"
-  battery_threshold: 50
-  poll_interval: 5
-  on_battery_grace: 15
+  name: "gembird@localhost"     # NUT UPS identifier
+  battery_threshold: 50         # Shutdown Proxmox nodes when battery drops <= 50%
+  poll_interval: 5              # Poll status every 5 seconds
+  on_battery_grace: 15          # Delay (seconds) after power loss before evaluating threshold
 
 startup:
-  delay: 40
+  delay: 40                     # Wait 40 seconds after power returns and conditions pass before sending WoL
   conditions:
-    battery_above: 70
+    battery_above: 70           # Require battery >= 70% before waking servers
     internet:
       enabled: true
-      host: "1.1.1.1"
+      host: "1.1.1.1"           # Confirm external gateway / WAN connectivity
+    dns:
+      enabled: false
+      host: "google.com"
 
 proxmox:
   nodes:
     - name: pve1
       host: 192.168.1.10
       mac: "aa:bb:cc:dd:ee:ff"
-  api_token: "root@pam!ups=YOUR_SECRET_TOKEN"
+    - name: pve2
+      host: 192.168.1.11
+      mac: "11:22:33:44:55:66"
+  api_token: "root@pam!ups=YOUR_SECRET_API_TOKEN"
   verify_ssl: false
+  timeout: 15
 
 wol:
   broadcast: "192.168.1.255"
   port: 9
 
+database:
+  retention_days: 7              # Automatically clean up stats & logs older than 7 days
+
 discord:
   enabled: true
-  webhook_url: "https://discord.com/api/webhooks/..."
+  webhook_url: "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL"
+  username: "UPS Controller"
+  mention: ""
+
+logging:
+  level: INFO
+  file: /var/log/ups-controller.log
+  max_bytes: 5000000
+  backup_count: 5
 ```
 
 ---
 
-## 👤 Admin Gebruikersbeheer CLI
+## 🛠️ Running as a Systemd Service
 
-Wanneer de software voor de eerste keer opstart zonder accounts, wordt er automatisch een standaard admin-account aangemaakt:
-- **Gebruikersnaam**: `admin`
-- **Wachtwoord**: `admin123`
-
-Je kunt ook rechtstreeks via de commandline beheerdersaccounts aanmaken of wachtwoorden herstellen:
+To run UPS Controller automatically on boot, create a systemd service unit:
 
 ```bash
-# Nieuwe admin gebruiker aanmaken
-python3 ups-monitor.py --create-admin adminnaam mijnwachtwoord
+sudo nano /etc/systemd/system/ups-controller.service
+```
 
-# Wachtwoord herstellen
-python3 ups-monitor.py --reset-password adminnaam nieuwwachtwoord
+Paste the following content:
+
+```ini
+[Unit]
+Description=UPS Controller & Web Dashboard for Proxmox
+After=network.target nut-server.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ups-controller
+ExecStart=/usr/bin/python3 /opt/ups-controller/ups-monitor.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start the service:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now ups-controller.service
 ```
 
 ---
 
-## 🧪 Handmatig Testen
+## 👤 Admin User Management CLI
 
-Test de Proxmox API shutdown of WoL functies veilig vanaf de commandline of vanuit het admin web-dashboard:
+When started for the first time without any registered users, the system automatically initializes a default admin user (`admin` / `admin123`).
+
+You can also manage admin accounts or reset passwords directly from the command line:
 
 ```bash
-# Test shutdown API naar alle Proxmox nodes
+# Create a new administrator account
+python3 ups-monitor.py --create-admin <username> <password>
+
+# Reset password for an existing account
+python3 ups-monitor.py --reset-password <username> <password>
+```
+
+---
+
+## 🧪 Safe Manual Testing
+
+Test API shutdown triggers or Wake-on-LAN packets safely via CLI or through the Admin Dashboard UI:
+
+```bash
+# Test shutdown API call on all configured Proxmox nodes
 python3 ups-monitor.py --test-shutdown
 
-# Test Wake-on-LAN naar alle Proxmox nodes
+# Send Wake-on-LAN magic packets to all configured Proxmox nodes
 python3 ups-monitor.py --test-wol
 ```
 
 ---
 
-## 🔒 Beveiliging & Productiereedheid
+## 🔒 Security & Architecture
 
-- **Publiek vs Admin Scheiding**: Niet-ingelogde bezoekers kunnen geen gevoelige API tokens, webhooks, of instellingen inzien of aanpassen.
-- **CSRF & Session Security**: Alle admin-acties vereisen een geldige CSRF-token header en HTTP-Only cookies met verloopdatum.
-- **Rate Limiting**: Inlogpogingen worden op IP-basis gelimiteerd om brute-force aanvallen te voorkomen.
-- **Database**: SQLite3 met geparametriseerde SQL-queries (geen SQL injection risico) en een thread-safe slot.
+- **Role Separation**: Public visitors can view real-time metrics and system health without accessing API tokens, webhooks, or admin configurations.
+- **Session & CSRF Protection**: Admin state changes require HTTP-Only session cookies and `X-CSRF-Token` header verification.
+- **Brute-Force Rate Limiting**: IP-based rate limiting on login attempts guards against brute-force attacks.
+- **SQL Injection Prevention**: SQLite operations use parameterized SQL queries and a thread lock for database safety.
 
 ---
 
-## 📄 Licentie
-MIT License - Vrij te gebruiken en aan te passen.
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
