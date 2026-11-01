@@ -2033,8 +2033,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 document.getElementById('stat-charge').innerText = `${data.ups.charge_percent}%`;
                 document.getElementById('progress-charge').style.width = `${Math.min(100, Math.max(0, parseFloat(data.ups.charge_percent) || 0))}%`;
 
-                const rtSeconds = parseFloat(data.ups.runtime_seconds) || 0;
-                document.getElementById('stat-runtime').innerText = `${Math.round(rtSeconds / 60)} min`;
+                const rawRt = data.ups.runtime_seconds;
+                if (rawRt === undefined || rawRt === null || rawRt === 'N/A' || rawRt === '' || isNaN(parseFloat(rawRt)) || parseFloat(rawRt) <= 0) {
+                    document.getElementById('stat-runtime').innerText = (rawRt !== undefined && rawRt !== null && parseFloat(rawRt) === 0 && parseFloat(data.ups.charge_percent) === 0) ? '0 min' : '-- min';
+                } else {
+                    const rtSeconds = parseFloat(rawRt);
+                    document.getElementById('stat-runtime').innerText = `${Math.round(rtSeconds / 60)} min`;
+                }
                 document.getElementById('stat-threshold').innerText = data.ups.battery_threshold;
                 document.getElementById('stat-load').innerText = `${data.ups.load_percent}%`;
                 document.getElementById('stat-in-v').innerText = data.ups.input_voltage;

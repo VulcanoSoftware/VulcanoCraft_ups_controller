@@ -947,7 +947,13 @@
 
             document.getElementById('stat-charge').innerText = `${Math.round(batteryCharge)}%`;
             document.getElementById('progress-charge').style.width = `${batteryCharge}%`;
-            document.getElementById('stat-runtime').innerText = `${Math.round(batteryCharge * 0.6)} min`;
+            const rawRt = rawNutData["battery.runtime"];
+            if (rawRt === undefined || rawRt === null || rawRt === 'N/A' || rawRt === '' || isNaN(parseFloat(rawRt)) || parseFloat(rawRt) <= 0) {
+                document.getElementById('stat-runtime').innerText = (rawRt !== undefined && rawRt !== null && parseFloat(rawRt) === 0 && batteryCharge === 0) ? '0 min' : '-- min';
+            } else {
+                const rtSeconds = parseFloat(rawRt);
+                document.getElementById('stat-runtime').innerText = `${Math.round(rtSeconds / 60)} min`;
+            }
 
             const stateEl = document.getElementById('stat-state');
             const stateIcon = document.getElementById('state-icon');
