@@ -417,7 +417,7 @@
                     </div>
 
                     <div class="col-lg-4">
-                        <div class="card p-4">
+                        <div class="card p-4 mb-4">
                             <h5 class="text-warning mb-3"><i class="bi bi-tools"></i> <span data-i18n="admin_actions_title">Admin Manual Actions</span></h5>
                             <p class="text-muted small" data-i18n="admin_actions_desc">Execute test triggers on configured Proxmox nodes.</p>
                             <div class="d-grid gap-3 mt-3">
@@ -429,6 +429,49 @@
                                 </button>
                             </div>
                             <div id="action-results" class="mt-3 small"></div>
+                        </div>
+
+                        <div class="card p-4 mb-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-cloud-arrow-down-fill"></i> <span data-i18n="updates_title">System Updates</span></h5>
+                            <p class="text-muted small" data-i18n="updates_desc">Check for the latest updates from GitHub and automatically update the UPS Controller.</p>
+                            <div class="d-flex flex-column gap-2 mt-2">
+                                <div class="d-flex justify-content-between small">
+                                    <span class="text-muted" data-i18n="current_version_label">Current Version:</span>
+                                    <code id="current-commit-hash" class="text-info">1baec67</code>
+                                </div>
+                                <div class="d-flex justify-content-between small">
+                                    <span class="text-muted" data-i18n="remote_version_label">Latest Remote:</span>
+                                    <code id="remote-commit-hash" class="text-warning">--</code>
+                                </div>
+                                <div id="update-status-msg" class="small mt-1 text-muted"></div>
+                            </div>
+                            <div class="d-grid gap-2 mt-3">
+                                <button class="btn btn-outline-info" onclick="checkForUpdates()">
+                                    <i class="bi bi-arrow-repeat me-1"></i> <span data-i18n="btn_check_updates">Check for Updates</span>
+                                </button>
+                                <button id="btn-apply-update" class="btn btn-success d-none" onclick="applySystemUpdate()">
+                                    <i class="bi bi-download me-1"></i> <span data-i18n="btn_apply_update">Apply Update Now</span>
+                                </button>
+                            </div>
+                            <div id="update-results" class="mt-3 small"></div>
+                        </div>
+
+                        <div class="card p-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-archive-fill"></i> <span data-i18n="backup_restore_title">Backup & Restore</span></h5>
+                            <p class="text-muted small" data-i18n="backup_restore_desc">Download a backup of all settings, admin users, and event logs, or restore from a previously saved backup file.</p>
+                            <div class="d-grid gap-3 mt-3">
+                                <button class="btn btn-outline-info text-start" onclick="downloadBackupFile()">
+                                    <i class="bi bi-download me-2"></i> <span data-i18n="btn_download_backup">Download System Backup</span>
+                                </button>
+                                <div>
+                                    <label class="form-label small text-muted" data-i18n="label_restore_file">Restore From File (.json)</label>
+                                    <input type="file" id="backup-file-input" class="form-control form-control-sm mb-2" accept=".json">
+                                    <button class="btn btn-warning w-100 fw-bold" onclick="restoreBackupFile()">
+                                        <i class="bi bi-upload me-1"></i> <span data-i18n="btn_restore_backup">Restore Backup Now</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="backup-results" class="mt-3 small"></div>
                         </div>
                     </div>
                 </div>
@@ -457,6 +500,28 @@
                         </div>
                     </div>
                     <div class="col-md-5">
+                        <div class="card p-4 mb-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-key-fill"></i> <span data-i18n="change_pw_title">Change Your Password</span></h5>
+                            <div class="form-text text-muted small mb-3" data-i18n="help_change_pw">Change the password of the currently logged-in account.</div>
+                            <form onsubmit="changeOwnPassword(event)">
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_current_password">Current Password</label>
+                                    <input type="password" id="current-password" class="form-control" required autocomplete="current-password">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_new_password">New Password</label>
+                                    <input type="password" id="change-new-password" class="form-control" required minlength="4" autocomplete="new-password">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_confirm_password">Confirm New Password</label>
+                                    <input type="password" id="confirm-new-password" class="form-control" required minlength="4" autocomplete="new-password">
+                                </div>
+                                <button type="submit" class="btn btn-info w-100 fw-bold">
+                                    <i class="bi bi-check-lg"></i> <span data-i18n="btn_change_password">Update Password</span>
+                                </button>
+                            </form>
+                        </div>
+
                         <div class="card p-4">
                             <h5 class="text-info mb-3"><i class="bi bi-person-plus"></i> <span data-i18n="create_user_title">Create Admin User</span></h5>
                             <form onsubmit="createAdminUser(event)">
@@ -641,6 +706,17 @@
                 admin_actions_desc: "Voer test-triggers uit op geconfigureerde Proxmox nodes.",
                 btn_test_wol: "Test Wake-on-LAN Versturen",
                 btn_test_shutdown: "Test Shutdown API Versturen",
+                updates_title: "Systeem Updates",
+                updates_desc: "Controleer op de nieuwste updates via GitHub en werk de UPS Controller automatisch bij.",
+                current_version_label: "Huidige Versie:",
+                remote_version_label: "Nieuwste Remote:",
+                btn_check_updates: "Controleer op Updates",
+                btn_apply_update: "Nu Bijwerken",
+                backup_restore_title: "Backup & Herstel",
+                backup_restore_desc: "Download een reservekopie van instellingen, beheerders en logboeken, of herstel een eerder opgeslagen bestand.",
+                btn_download_backup: "Download Systeem Backup",
+                label_restore_file: "Herstel vanuit Bestand (.json)",
+                btn_restore_backup: "Nu Herstellen",
                 users_title: "Beheerdersaccounts",
                 col_username: "Gebruikersnaam",
                 col_created: "Aangemaakt op",
@@ -649,6 +725,12 @@
                 label_username: "Gebruikersnaam",
                 label_password: "Wachtwoord",
                 btn_create_account: "Account Aanmaken",
+                change_pw_title: "Eigen Wachtwoord Wijzigen",
+                help_change_pw: "Wijzig hier het wachtwoord van het momenteel ingelogde account.",
+                label_current_password: "Huidig Wachtwoord",
+                label_new_password: "Nieuw Wachtwoord",
+                label_confirm_password: "Bevestig Nieuw Wachtwoord",
+                btn_change_password: "Wachtwoord Bijwerken",
                 login_modal_title: "Admin Inloggen",
                 btn_login_submit: "Inloggen",
                 btn_delete: "Verwijderen",
@@ -748,6 +830,17 @@
                 admin_actions_desc: "Execute test triggers on configured Proxmox nodes.",
                 btn_test_wol: "Send Test Wake-on-LAN",
                 btn_test_shutdown: "Send Test Shutdown API",
+                updates_title: "System Updates",
+                updates_desc: "Check for the latest updates from GitHub and automatically update the UPS Controller.",
+                current_version_label: "Current Version:",
+                remote_version_label: "Latest Remote:",
+                btn_check_updates: "Check for Updates",
+                btn_apply_update: "Apply Update Now",
+                backup_restore_title: "Backup & Restore",
+                backup_restore_desc: "Download a backup of all settings, admin users, and event logs, or restore from a previously saved backup file.",
+                btn_download_backup: "Download System Backup",
+                label_restore_file: "Restore From File (.json)",
+                btn_restore_backup: "Restore Backup Now",
                 users_title: "Admin Accounts",
                 col_username: "Username",
                 col_created: "Created",
@@ -756,6 +849,12 @@
                 label_username: "Username",
                 label_password: "Password",
                 btn_create_account: "Create Account",
+                change_pw_title: "Change Your Password",
+                help_change_pw: "Change the password of the currently logged-in account.",
+                label_current_password: "Current Password",
+                label_new_password: "New Password",
+                label_confirm_password: "Confirm New Password",
+                btn_change_password: "Update Password",
                 login_modal_title: "Admin Login",
                 btn_login_submit: "Login",
                 btn_delete: "Delete",
@@ -947,7 +1046,13 @@
 
             document.getElementById('stat-charge').innerText = `${Math.round(batteryCharge)}%`;
             document.getElementById('progress-charge').style.width = `${batteryCharge}%`;
-            document.getElementById('stat-runtime').innerText = `${Math.round(batteryCharge * 0.6)} min`;
+            const rawRt = rawNutData["battery.runtime"];
+            if (rawRt === undefined || rawRt === null || rawRt === 'N/A' || rawRt === '' || isNaN(parseFloat(rawRt)) || parseFloat(rawRt) <= 0) {
+                document.getElementById('stat-runtime').innerText = (rawRt !== undefined && rawRt !== null && parseFloat(rawRt) === 0 && batteryCharge === 0) ? '0 min' : '-- min';
+            } else {
+                const rtSeconds = parseFloat(rawRt);
+                document.getElementById('stat-runtime').innerText = `${Math.round(rtSeconds / 60)} min`;
+            }
 
             const stateEl = document.getElementById('stat-state');
             const stateIcon = document.getElementById('state-icon');
@@ -1225,6 +1330,111 @@
 
             users = users.filter(u => u.id !== userId);
             loadUsersList();
+        }
+
+        function changeOwnPassword(e) {
+            e.preventDefault();
+            const curP = document.getElementById('current-password').value;
+            const newP = document.getElementById('change-new-password').value;
+            const confP = document.getElementById('confirm-new-password').value;
+
+            if (newP !== confP) {
+                alert(currentLang === 'nl' ? 'Nieuwe wachtwoorden komen niet overeen!' : 'New passwords do not match!');
+                return;
+            }
+
+            const activeUser = users.find(u => u.username === authUser);
+            if (!activeUser || activeUser.password !== curP) {
+                alert(currentLang === 'nl' ? 'Huidig wachtwoord is onjuist!' : 'Incorrect current password!');
+                return;
+            }
+
+            activeUser.password = newP;
+            document.getElementById('current-password').value = '';
+            document.getElementById('change-new-password').value = '';
+            document.getElementById('confirm-new-password').value = '';
+            alert(currentLang === 'nl' ? 'Wachtwoord succesvol gewijzigd!' : 'Password updated successfully!');
+        }
+
+        function checkForUpdates() {
+            const statusMsg = document.getElementById('update-status-msg');
+            const btnApply = document.getElementById('btn-apply-update');
+            statusMsg.innerText = currentLang === 'nl' ? 'Controleren op updates...' : 'Checking for updates...';
+            statusMsg.className = 'small mt-1 text-info';
+
+            setTimeout(() => {
+                document.getElementById('current-commit-hash').innerText = '1baec67';
+                document.getElementById('remote-commit-hash').innerText = '1baec67';
+                statusMsg.innerText = currentLang === 'nl' ? 'Systeem is up-to-date.' : 'System is up to date.';
+                statusMsg.className = 'small mt-1 text-success fw-bold';
+                btnApply.classList.add('d-none');
+            }, 600);
+        }
+
+        function applySystemUpdate() {
+            const msg = currentLang === 'nl' ? 'Weet u zeker dat u de nieuwste versie wilt binnenhalen en bijwerken?' : 'Are you sure you want to pull and apply the latest update?';
+            if (!confirm(msg)) return;
+            const resDiv = document.getElementById('update-results');
+            resDiv.innerHTML = '<span class="text-warning">Applying update...</span>';
+            setTimeout(() => {
+                resDiv.innerHTML = '<span class="text-success fw-bold">Update successfully applied! (Demo showcase simulated)</span>';
+                checkForUpdates();
+            }, 800);
+        }
+
+        function downloadBackupFile() {
+            const backupObj = {
+                version: 1,
+                exported_at: Date.now() / 1000,
+                settings: {
+                    web: { host: "0.0.0.0", port: 8080 },
+                    ups: { name: "gembird@localhost", battery_threshold: 50, poll_interval: 5, on_battery_grace: 15 }
+                },
+                users: users,
+                events: eventLogs
+            };
+            const blob = new Blob([JSON.stringify(backupObj, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `ups-controller-backup-demo.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function restoreBackupFile() {
+            const fileInput = document.getElementById('backup-file-input');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert(currentLang === 'nl' ? 'Selecteer eerst een .json backup-bestand!' : 'Please select a .json backup file first!');
+                return;
+            }
+
+            const confirmMsg = currentLang === 'nl' ? 'WAARSCHUWING: Het herstellen van een backup overschrijft de huidige instellingen en gebruikers. Weet u zeker dat u wilt doorgaan?' : 'WARNING: Restoring a backup overwrites current settings and users. Are you sure you want to proceed?';
+            if (!confirm(confirmMsg)) return;
+
+            const resDiv = document.getElementById('backup-results');
+            resDiv.innerHTML = '<span class="text-warning">Restoring backup...</span>';
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const parsedJson = JSON.parse(e.target.result);
+                    if (parsedJson.users && Array.isArray(parsedJson.users)) {
+                        users = parsedJson.users;
+                        loadUsersList();
+                    }
+                    if (parsedJson.events && Array.isArray(parsedJson.events)) {
+                        eventLogs = parsedJson.events;
+                        renderEvents();
+                    }
+                    resDiv.innerHTML = '<span class="text-success fw-bold">Backup successfully restored! (Demo simulated)</span>';
+                    alert(currentLang === 'nl' ? 'Backup succesvol hersteld!' : 'Backup successfully restored!');
+                } catch(err) {
+                    resDiv.innerHTML = '<span class="text-danger">Invalid JSON file format</span>';
+                }
+            };
+            reader.readAsText(file);
         }
     </script>
 </body>

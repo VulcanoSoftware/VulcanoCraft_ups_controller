@@ -219,6 +219,26 @@ class Database:
             conn.commit()
             return c.rowcount > 0
 
+    def change_password(self, user_id: int, old_password: str, new_password: str) -> Tuple[bool, str]:
+        if not new_password or len(new_password) < 4:
+            return False, "New password must be at least 4 characters long"
+        with db_lock, self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            row = c.fetchone()
+            if not row:
+                return False, "User not found"
+            old_hash, _ = self.hash_password(old_password, row['salt'])
+            if not secrets.compare_digest(old_hash, row['password_hash']):
+                return False, "Incorrect current password"
+            pwd_hash, salt = self.hash_password(new_password)
+            c.execute(
+                "UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+                (pwd_hash, salt, user_id)
+            )
+            conn.commit()
+            return True, "Password updated successfully"
+
     def verify_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         with db_lock, self.get_connection() as conn:
             c = conn.cursor()
@@ -342,6 +362,67 @@ class Database:
                 except Exception:
                     pass
             return result
+
+    def export_backup_data(self) -> Dict[str, Any]:
+        with db_lock, self.get_connection() as conn:
+            c = conn.cursor()
+            # Settings
+            c.execute("SELECT key, value FROM settings")
+            settings = {row['key']: row['value'] for row in c.fetchall()}
+
+            # Users
+            c.execute("SELECT id, username, password_hash, salt, created_at FROM users")
+            users = [dict(row) for row in c.fetchall()]
+
+            # Events (latest 500)
+            c.execute("SELECT timestamp, level, message FROM events ORDER BY id DESC LIMIT 500")
+            events = [dict(row) for row in c.fetchall()]
+            events.reverse()
+
+            return {
+                "version": 1,
+                "exported_at": time.time(),
+                "settings": settings,
+                "users": users,
+                "events": events
+            }
+
+    def restore_backup_data(self, backup: Dict[str, Any]) -> Tuple[bool, str]:
+        if not isinstance(backup, dict) or "settings" not in backup or "users" not in backup:
+            return False, "Invalid backup file format"
+
+        with db_lock, self.get_connection() as conn:
+            c = conn.cursor()
+            try:
+                # Restore settings
+                c.execute("DELETE FROM settings")
+                for k, v in backup.get("settings", {}).items():
+                    val_str = v if isinstance(v, str) else json.dumps(v)
+                    c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (k, val_str))
+
+                # Restore users (if non-empty)
+                backup_users = backup.get("users", [])
+                if backup_users and isinstance(backup_users, list):
+                    c.execute("DELETE FROM users")
+                    for u in backup_users:
+                        c.execute(
+                            "INSERT INTO users (id, username, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?)",
+                            (u.get("id"), u["username"], u["password_hash"], u["salt"], u.get("created_at"))
+                        )
+
+                # Optionally restore events
+                if "events" in backup and isinstance(backup["events"], list):
+                    for ev in backup["events"]:
+                        c.execute(
+                            "INSERT INTO events (timestamp, level, message) VALUES (?, ?, ?)",
+                            (ev["timestamp"], ev["level"], ev["message"])
+                        )
+
+                conn.commit()
+                return True, "Backup restored successfully"
+            except Exception as e:
+                conn.rollback()
+                return False, f"Restore failed: {e}"
 
 
 def validate_mac(mac: str) -> bool:
@@ -979,6 +1060,18 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
             self.send_json({"users": self.db.list_users()})
+        elif path == "/api/admin/update/check":
+            session = self.authenticate_admin()
+            if not session:
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            self.handle_check_update()
+        elif path == "/api/admin/backup/download":
+            session = self.authenticate_admin()
+            if not session:
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            self.handle_backup_download()
         elif path == "/api/auth/me":
             session = self.authenticate_admin()
             if session:
@@ -1080,8 +1173,108 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
             else:
                 self.send_json({"error": "Failed to delete user"}, 400)
 
+        elif path == "/api/admin/users/change-password":
+            old_p = body.get("old_password", "")
+            new_p = body.get("new_password", "")
+            if not old_p or not new_p:
+                self.send_json({"error": "Current and new password are required"}, 400)
+                return
+            ok, msg = self.db.change_password(session["user_id"], old_p, new_p)
+            if ok:
+                self.send_json({"success": True, "message": msg})
+            else:
+                self.send_json({"error": msg}, 400)
+
+        elif path == "/api/admin/update/apply":
+            self.handle_apply_update()
+
+        elif path == "/api/admin/backup/restore":
+            self.handle_backup_restore(body)
+
         else:
             self.send_json({"error": "Not Found"}, 404)
+
+    def handle_check_update(self):
+        try:
+            # Get current commit
+            cur_proc = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=BASE_DIR, capture_output=True, text=True, timeout=5)
+            cur_commit = cur_proc.stdout.strip() if cur_proc.returncode == 0 else "unknown"
+
+            # Fetch remote
+            fetch_proc = subprocess.run(["git", "fetch", "origin"], cwd=BASE_DIR, capture_output=True, text=True, timeout=15)
+
+            # Get remote commit
+            rem_proc = subprocess.run(["git", "rev-parse", "--short", "origin/main"], cwd=BASE_DIR, capture_output=True, text=True, timeout=5)
+            rem_commit = rem_proc.stdout.strip() if rem_proc.returncode == 0 else cur_commit
+
+            update_available = (cur_commit != "unknown" and rem_commit != "unknown" and cur_commit != rem_commit)
+            self.send_json({
+                "success": True,
+                "current_commit": cur_commit,
+                "remote_commit": rem_commit,
+                "update_available": update_available
+            })
+        except Exception as e:
+            self.send_json({"success": False, "error": str(e)}, 500)
+
+    def handle_apply_update(self):
+        try:
+            pull_proc = subprocess.run(["git", "pull", "origin", "main"], cwd=BASE_DIR, capture_output=True, text=True, timeout=30)
+            if pull_proc.returncode == 0:
+                self.controller.log_event("INFO", f"System auto-updated successfully: {pull_proc.stdout.strip()}")
+                self.send_json({
+                    "success": True,
+                    "message": "Update successfully applied! Please restart the service or it will reload on next boot.",
+                    "details": pull_proc.stdout.strip()
+                })
+            else:
+                err_msg = pull_proc.stderr.strip() or pull_proc.stdout.strip()
+                self.controller.log_event("ERROR", f"Auto-update failed: {err_msg}")
+                self.send_json({"success": False, "error": err_msg}, 500)
+        except Exception as e:
+            self.send_json({"success": False, "error": str(e)}, 500)
+
+    def handle_backup_download(self):
+        try:
+            backup_data = self.db.export_backup_data()
+            body = json.dumps(backup_data, indent=2).encode("utf-8")
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            filename = f"ups-controller-backup-{ts}.json"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_security_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as e:
+            self.send_json({"error": f"Failed to generate backup: {e}"}, 500)
+
+    def handle_backup_restore(self, body: Dict[str, Any]):
+        backup_content = body.get("backup")
+        if not backup_content:
+            self.send_json({"error": "No backup payload provided"}, 400)
+            return
+        if isinstance(backup_content, str):
+            try:
+                backup_content = json.loads(backup_content)
+            except Exception:
+                self.send_json({"error": "Malformed JSON in backup file"}, 400)
+                return
+
+        ok, msg = self.db.restore_backup_data(backup_content)
+        if ok:
+            # Re-read and apply config to controller
+            try:
+                reloaded_cfg = load_and_validate_config(self.db)
+                self.controller.cfg = reloaded_cfg
+                self.controller.nodes = [Node(**n) for n in reloaded_cfg["proxmox"]["nodes"]]
+            except Exception as e:
+                logging.warning(f"Warning during config reload after restore: {e}")
+            self.controller.log_event("WARNING", "System backup restored via Web Dashboard")
+            self.send_json({"success": True, "message": msg})
+        else:
+            self.send_json({"error": msg}, 400)
 
     def handle_public_stats(self):
         ups_raw = self.controller.get_ups_status()
@@ -1539,7 +1732,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     </div>
 
                     <div class="col-lg-4">
-                        <div class="card p-4">
+                        <div class="card p-4 mb-4">
                             <h5 class="text-warning mb-3"><i class="bi bi-tools"></i> <span data-i18n="admin_actions_title">Admin Manual Actions</span></h5>
                             <p class="text-muted small" data-i18n="admin_actions_desc">Execute test triggers on configured Proxmox nodes.</p>
                             <div class="d-grid gap-3 mt-3">
@@ -1551,6 +1744,49 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                 </button>
                             </div>
                             <div id="action-results" class="mt-3 small"></div>
+                        </div>
+
+                        <div class="card p-4 mb-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-cloud-arrow-down-fill"></i> <span data-i18n="updates_title">System Updates</span></h5>
+                            <p class="text-muted small" data-i18n="updates_desc">Check for the latest updates from GitHub and automatically update the UPS Controller.</p>
+                            <div class="d-flex flex-column gap-2 mt-2">
+                                <div class="d-flex justify-content-between small">
+                                    <span class="text-muted" data-i18n="current_version_label">Current Version:</span>
+                                    <code id="current-commit-hash" class="text-info">--</code>
+                                </div>
+                                <div class="d-flex justify-content-between small">
+                                    <span class="text-muted" data-i18n="remote_version_label">Latest Remote:</span>
+                                    <code id="remote-commit-hash" class="text-warning">--</code>
+                                </div>
+                                <div id="update-status-msg" class="small mt-1 text-muted"></div>
+                            </div>
+                            <div class="d-grid gap-2 mt-3">
+                                <button class="btn btn-outline-info" onclick="checkForUpdates()">
+                                    <i class="bi bi-arrow-repeat me-1"></i> <span data-i18n="btn_check_updates">Check for Updates</span>
+                                </button>
+                                <button id="btn-apply-update" class="btn btn-success d-none" onclick="applySystemUpdate()">
+                                    <i class="bi bi-download me-1"></i> <span data-i18n="btn_apply_update">Apply Update Now</span>
+                                </button>
+                            </div>
+                            <div id="update-results" class="mt-3 small"></div>
+                        </div>
+
+                        <div class="card p-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-archive-fill"></i> <span data-i18n="backup_restore_title">Backup & Restore</span></h5>
+                            <p class="text-muted small" data-i18n="backup_restore_desc">Download a backup of all settings, admin users, and event logs, or restore from a previously saved backup file.</p>
+                            <div class="d-grid gap-3 mt-3">
+                                <button class="btn btn-outline-info text-start" onclick="downloadBackupFile()">
+                                    <i class="bi bi-download me-2"></i> <span data-i18n="btn_download_backup">Download System Backup</span>
+                                </button>
+                                <div>
+                                    <label class="form-label small text-muted" data-i18n="label_restore_file">Restore From File (.json)</label>
+                                    <input type="file" id="backup-file-input" class="form-control form-control-sm mb-2" accept=".json">
+                                    <button class="btn btn-warning w-100 fw-bold" onclick="restoreBackupFile()">
+                                        <i class="bi bi-upload me-1"></i> <span data-i18n="btn_restore_backup">Restore Backup Now</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="backup-results" class="mt-3 small"></div>
                         </div>
                     </div>
                 </div>
@@ -1580,6 +1816,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         </div>
                     </div>
                     <div class="col-md-5">
+                        <div class="card p-4 mb-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-key-fill"></i> <span data-i18n="change_pw_title">Change Your Password</span></h5>
+                            <div class="form-text text-muted small mb-3" data-i18n="help_change_pw">Change the password of the currently logged-in account.</div>
+                            <form onsubmit="changeOwnPassword(event)">
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_current_password">Current Password</label>
+                                    <input type="password" id="current-password" class="form-control" required autocomplete="current-password">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_new_password">New Password</label>
+                                    <input type="password" id="change-new-password" class="form-control" required minlength="4" autocomplete="new-password">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_confirm_password">Confirm New Password</label>
+                                    <input type="password" id="confirm-new-password" class="form-control" required minlength="4" autocomplete="new-password">
+                                </div>
+                                <button type="submit" class="btn btn-info w-100 fw-bold">
+                                    <i class="bi bi-check-lg"></i> <span data-i18n="btn_change_password">Update Password</span>
+                                </button>
+                            </form>
+                        </div>
+
                         <div class="card p-4">
                             <h5 class="text-info mb-3"><i class="bi bi-person-plus"></i> <span data-i18n="create_user_title">Create Admin User</span></h5>
                             <form onsubmit="createAdminUser(event)">
@@ -1708,6 +1966,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 admin_actions_desc: "Voer test-triggers uit op geconfigureerde Proxmox nodes.",
                 btn_test_wol: "Test Wake-on-LAN Versturen",
                 btn_test_shutdown: "Test Shutdown API Versturen",
+                updates_title: "Systeem Updates",
+                updates_desc: "Controleer op de nieuwste updates via GitHub en werk de UPS Controller automatisch bij.",
+                current_version_label: "Huidige Versie:",
+                remote_version_label: "Nieuwste Remote:",
+                btn_check_updates: "Controleer op Updates",
+                btn_apply_update: "Nu Bijwerken",
+                backup_restore_title: "Backup & Herstel",
+                backup_restore_desc: "Download een reservekopie van instellingen, beheerders en logboeken, of herstel een eerder opgeslagen bestand.",
+                btn_download_backup: "Download Systeem Backup",
+                label_restore_file: "Herstel vanuit Bestand (.json)",
+                btn_restore_backup: "Nu Herstellen",
                 users_title: "Beheerdersaccounts",
                 col_username: "Gebruikersnaam",
                 col_created: "Aangemaakt op",
@@ -1716,6 +1985,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 label_username: "Gebruikersnaam",
                 label_password: "Wachtwoord",
                 btn_create_account: "Account Aanmaken",
+                change_pw_title: "Eigen Wachtwoord Wijzigen",
+                help_change_pw: "Wijzig hier het wachtwoord van het momenteel ingelogde account.",
+                label_current_password: "Huidig Wachtwoord",
+                label_new_password: "Nieuw Wachtwoord",
+                label_confirm_password: "Bevestig Nieuw Wachtwoord",
+                btn_change_password: "Wachtwoord Bijwerken",
                 login_modal_title: "Admin Inloggen",
                 btn_login_submit: "Inloggen",
                 btn_delete: "Verwijderen",
@@ -1811,6 +2086,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 admin_actions_desc: "Execute test triggers on configured Proxmox nodes.",
                 btn_test_wol: "Send Test Wake-on-LAN",
                 btn_test_shutdown: "Send Test Shutdown API",
+                updates_title: "System Updates",
+                updates_desc: "Check for the latest updates from GitHub and automatically update the UPS Controller.",
+                current_version_label: "Current Version:",
+                remote_version_label: "Latest Remote:",
+                btn_check_updates: "Check for Updates",
+                btn_apply_update: "Apply Update Now",
+                backup_restore_title: "Backup & Restore",
+                backup_restore_desc: "Download a backup of all settings, admin users, and event logs, or restore from a previously saved backup file.",
+                btn_download_backup: "Download System Backup",
+                label_restore_file: "Restore From File (.json)",
+                btn_restore_backup: "Restore Backup Now",
                 users_title: "Admin Accounts",
                 col_username: "Username",
                 col_created: "Created",
@@ -1819,6 +2105,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 label_username: "Username",
                 label_password: "Password",
                 btn_create_account: "Create Account",
+                change_pw_title: "Change Your Password",
+                help_change_pw: "Change the password of the currently logged-in account.",
+                label_current_password: "Current Password",
+                label_new_password: "New Password",
+                label_confirm_password: "Confirm New Password",
+                btn_change_password: "Update Password",
                 login_modal_title: "Admin Login",
                 btn_login_submit: "Login",
                 btn_delete: "Delete",
@@ -2033,8 +2325,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 document.getElementById('stat-charge').innerText = `${data.ups.charge_percent}%`;
                 document.getElementById('progress-charge').style.width = `${Math.min(100, Math.max(0, parseFloat(data.ups.charge_percent) || 0))}%`;
 
-                const rtSeconds = parseFloat(data.ups.runtime_seconds) || 0;
-                document.getElementById('stat-runtime').innerText = `${Math.round(rtSeconds / 60)} min`;
+                const rawRt = data.ups.runtime_seconds;
+                if (rawRt === undefined || rawRt === null || rawRt === 'N/A' || rawRt === '' || isNaN(parseFloat(rawRt)) || parseFloat(rawRt) <= 0) {
+                    document.getElementById('stat-runtime').innerText = (rawRt !== undefined && rawRt !== null && parseFloat(rawRt) === 0 && parseFloat(data.ups.charge_percent) === 0) ? '0 min' : '-- min';
+                } else {
+                    const rtSeconds = parseFloat(rawRt);
+                    document.getElementById('stat-runtime').innerText = `${Math.round(rtSeconds / 60)} min`;
+                }
                 document.getElementById('stat-threshold').innerText = data.ups.battery_threshold;
                 document.getElementById('stat-load').innerText = `${data.ups.load_percent}%`;
                 document.getElementById('stat-in-v').innerText = data.ups.input_voltage;
@@ -2440,6 +2737,130 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     alert('Error: ' + (data.error || 'Failed to delete user'));
                 }
             } catch(e) { alert('Network error'); }
+        }
+
+        async function changeOwnPassword(e) {
+            e.preventDefault();
+            const curP = document.getElementById('current-password').value;
+            const newP = document.getElementById('change-new-password').value;
+            const confP = document.getElementById('confirm-new-password').value;
+
+            if (newP !== confP) {
+                alert(currentLang === 'nl' ? 'Nieuwe wachtwoorden komen niet overeen!' : 'New passwords do not match!');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/admin/users/change-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({ old_password: curP, new_password: newP, csrf_token: csrfToken })
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    alert(currentLang === 'nl' ? 'Wachtwoord succesvol gewijzigd!' : 'Password updated successfully!');
+                    document.getElementById('current-password').value = '';
+                    document.getElementById('change-new-password').value = '';
+                    document.getElementById('confirm-new-password').value = '';
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to change password'));
+                }
+            } catch(e) { alert('Network error'); }
+        }
+
+        async function checkForUpdates() {
+            const statusMsg = document.getElementById('update-status-msg');
+            const btnApply = document.getElementById('btn-apply-update');
+            statusMsg.innerText = currentLang === 'nl' ? 'Controleren op updates...' : 'Checking for updates...';
+            statusMsg.className = 'small mt-1 text-info';
+            try {
+                const res = await fetch('/api/admin/update/check');
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    document.getElementById('current-commit-hash').innerText = data.current_commit;
+                    document.getElementById('remote-commit-hash').innerText = data.remote_commit;
+                    if (data.update_available) {
+                        statusMsg.innerText = currentLang === 'nl' ? 'Nieuwe versie beschikbaar!' : 'New version available!';
+                        statusMsg.className = 'small mt-1 text-warning fw-bold';
+                        btnApply.classList.remove('d-none');
+                    } else {
+                        statusMsg.innerText = currentLang === 'nl' ? 'Systeem is up-to-date.' : 'System is up to date.';
+                        statusMsg.className = 'small mt-1 text-success fw-bold';
+                        btnApply.classList.add('d-none');
+                    }
+                } else {
+                    statusMsg.innerText = (currentLang === 'nl' ? 'Fout bij controle: ' : 'Check failed: ') + (data.error || 'Unknown error');
+                    statusMsg.className = 'small mt-1 text-danger';
+                }
+            } catch(e) {
+                statusMsg.innerText = currentLang === 'nl' ? 'Netwerkfout bij controle.' : 'Network error checking updates.';
+                statusMsg.className = 'small mt-1 text-danger';
+            }
+        }
+
+        async function applySystemUpdate() {
+            const msg = currentLang === 'nl' ? 'Weet u zeker dat u de nieuwste versie wilt binnenhalen en bijwerken?' : 'Are you sure you want to pull and apply the latest update?';
+            if (!confirm(msg)) return;
+            const resDiv = document.getElementById('update-results');
+            resDiv.innerHTML = '<span class="text-warning">Applying update...</span>';
+            try {
+                const res = await fetch('/api/admin/update/apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({ csrf_token: csrfToken })
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    resDiv.innerHTML = `<span class="text-success fw-bold">${data.message}</span>`;
+                    checkForUpdates();
+                } else {
+                    resDiv.innerHTML = `<span class="text-danger fw-bold">Update failed: ${data.error || 'Unknown error'}</span>`;
+                }
+            } catch(e) {
+                resDiv.innerHTML = '<span class="text-danger">Network error during update</span>';
+            }
+        }
+
+        function downloadBackupFile() {
+            window.location.href = '/api/admin/backup/download';
+        }
+
+        async function restoreBackupFile() {
+            const fileInput = document.getElementById('backup-file-input');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert(currentLang === 'nl' ? 'Selecteer eerst een .json backup-bestand!' : 'Please select a .json backup file first!');
+                return;
+            }
+
+            const confirmMsg = currentLang === 'nl' ? 'WAARSCHUWING: Het herstellen van een backup overschrijft de huidige instellingen en gebruikers. Weet u zeker dat u wilt doorgaan?' : 'WARNING: Restoring a backup overwrites current settings and users. Are you sure you want to proceed?';
+            if (!confirm(confirmMsg)) return;
+
+            const resDiv = document.getElementById('backup-results');
+            resDiv.innerHTML = '<span class="text-warning">Restoring backup...</span>';
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const parsedJson = JSON.parse(e.target.result);
+                    const res = await fetch('/api/admin/backup/restore', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                        body: JSON.stringify({ backup: parsedJson, csrf_token: csrfToken })
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        resDiv.innerHTML = `<span class="text-success fw-bold">${data.message}</span>`;
+                        alert(currentLang === 'nl' ? 'Backup succesvol hersteld!' : 'Backup successfully restored!');
+                        loadAdminData();
+                    } else {
+                        resDiv.innerHTML = `<span class="text-danger fw-bold">Restore failed: ${data.error || 'Unknown error'}</span>`;
+                    }
+                } catch(err) {
+                    resDiv.innerHTML = `<span class="text-danger">Invalid JSON file format</span>`;
+                }
+            };
+            reader.readAsText(file);
         }
     </script>
 </body>
