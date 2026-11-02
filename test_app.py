@@ -2,6 +2,7 @@ import unittest
 import tempfile
 import time
 import os
+import json
 import threading
 import urllib.request
 import importlib.util
@@ -188,6 +189,44 @@ class TestUpdateEndpoints(unittest.TestCase):
             data = json.loads(resp.read().decode())
             self.assertTrue(data.get("success"))
             self.assertIn("current_commit", data)
+
+
+class TestBackupRestore(unittest.TestCase):
+    def setUp(self):
+        self.tmp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        self.tmp_db.close()
+        self.db = ups_monitor.Database(Path(self.tmp_db.name))
+        self.db.create_user("user1", "pass123")
+        self.db.save_setting("test_key", {"foo": "bar"})
+        self.db.record_event("INFO", "Test event")
+
+    def tearDown(self):
+        if os.path.exists(self.tmp_db.name):
+            os.unlink(self.tmp_db.name)
+
+    def test_export_and_restore(self):
+        backup = self.db.export_backup_data()
+        self.assertIn("settings", backup)
+        self.assertIn("users", backup)
+        self.assertIn("events", backup)
+        self.assertEqual(len(backup["users"]), 1)
+
+        # Clear and restore on a second database
+        tmp2 = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        tmp2.close()
+        db2 = ups_monitor.Database(Path(tmp2.name))
+        ok, msg = db2.restore_backup_data(backup)
+        self.assertTrue(ok)
+        self.assertEqual(db2.user_count(), 1)
+        settings = db2.load_settings()
+        self.assertIn("test_key", settings)
+        self.assertEqual(settings["test_key"], {"foo": "bar"})
+        os.unlink(tmp2.name)
+
+    def test_invalid_backup_restore(self):
+        ok, msg = self.db.restore_backup_data({"invalid": 123})
+        self.assertFalse(ok)
+        self.assertIn("Invalid backup", msg)
 
 
 def yaml_helper_default_config():

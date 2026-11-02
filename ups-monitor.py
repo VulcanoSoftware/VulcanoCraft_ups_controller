@@ -363,6 +363,67 @@ class Database:
                     pass
             return result
 
+    def export_backup_data(self) -> Dict[str, Any]:
+        with db_lock, self.get_connection() as conn:
+            c = conn.cursor()
+            # Settings
+            c.execute("SELECT key, value FROM settings")
+            settings = {row['key']: row['value'] for row in c.fetchall()}
+
+            # Users
+            c.execute("SELECT id, username, password_hash, salt, created_at FROM users")
+            users = [dict(row) for row in c.fetchall()]
+
+            # Events (latest 500)
+            c.execute("SELECT timestamp, level, message FROM events ORDER BY id DESC LIMIT 500")
+            events = [dict(row) for row in c.fetchall()]
+            events.reverse()
+
+            return {
+                "version": 1,
+                "exported_at": time.time(),
+                "settings": settings,
+                "users": users,
+                "events": events
+            }
+
+    def restore_backup_data(self, backup: Dict[str, Any]) -> Tuple[bool, str]:
+        if not isinstance(backup, dict) or "settings" not in backup or "users" not in backup:
+            return False, "Invalid backup file format"
+
+        with db_lock, self.get_connection() as conn:
+            c = conn.cursor()
+            try:
+                # Restore settings
+                c.execute("DELETE FROM settings")
+                for k, v in backup.get("settings", {}).items():
+                    val_str = v if isinstance(v, str) else json.dumps(v)
+                    c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (k, val_str))
+
+                # Restore users (if non-empty)
+                backup_users = backup.get("users", [])
+                if backup_users and isinstance(backup_users, list):
+                    c.execute("DELETE FROM users")
+                    for u in backup_users:
+                        c.execute(
+                            "INSERT INTO users (id, username, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?)",
+                            (u.get("id"), u["username"], u["password_hash"], u["salt"], u.get("created_at"))
+                        )
+
+                # Optionally restore events
+                if "events" in backup and isinstance(backup["events"], list):
+                    for ev in backup["events"]:
+                        c.execute(
+                            "INSERT INTO events (timestamp, level, message) VALUES (?, ?, ?)",
+                            (ev["timestamp"], ev["level"], ev["message"])
+                        )
+
+                conn.commit()
+                return True, "Backup restored successfully"
+            except Exception as e:
+                conn.rollback()
+                return False, f"Restore failed: {e}"
+
 
 def validate_mac(mac: str) -> bool:
     return bool(re.match(r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$", mac))
@@ -1005,6 +1066,12 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
             self.handle_check_update()
+        elif path == "/api/admin/backup/download":
+            session = self.authenticate_admin()
+            if not session:
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            self.handle_backup_download()
         elif path == "/api/auth/me":
             session = self.authenticate_admin()
             if session:
@@ -1121,6 +1188,9 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/admin/update/apply":
             self.handle_apply_update()
 
+        elif path == "/api/admin/backup/restore":
+            self.handle_backup_restore(body)
+
         else:
             self.send_json({"error": "Not Found"}, 404)
 
@@ -1163,6 +1233,48 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 self.send_json({"success": False, "error": err_msg}, 500)
         except Exception as e:
             self.send_json({"success": False, "error": str(e)}, 500)
+
+    def handle_backup_download(self):
+        try:
+            backup_data = self.db.export_backup_data()
+            body = json.dumps(backup_data, indent=2).encode("utf-8")
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            filename = f"ups-controller-backup-{ts}.json"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_security_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as e:
+            self.send_json({"error": f"Failed to generate backup: {e}"}, 500)
+
+    def handle_backup_restore(self, body: Dict[str, Any]):
+        backup_content = body.get("backup")
+        if not backup_content:
+            self.send_json({"error": "No backup payload provided"}, 400)
+            return
+        if isinstance(backup_content, str):
+            try:
+                backup_content = json.loads(backup_content)
+            except Exception:
+                self.send_json({"error": "Malformed JSON in backup file"}, 400)
+                return
+
+        ok, msg = self.db.restore_backup_data(backup_content)
+        if ok:
+            # Re-read and apply config to controller
+            try:
+                reloaded_cfg = load_and_validate_config(self.db)
+                self.controller.cfg = reloaded_cfg
+                self.controller.nodes = [Node(**n) for n in reloaded_cfg["proxmox"]["nodes"]]
+            except Exception as e:
+                logging.warning(f"Warning during config reload after restore: {e}")
+            self.controller.log_event("WARNING", "System backup restored via Web Dashboard")
+            self.send_json({"success": True, "message": msg})
+        else:
+            self.send_json({"error": msg}, 400)
 
     def handle_public_stats(self):
         ups_raw = self.controller.get_ups_status()
@@ -1634,7 +1746,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                             <div id="action-results" class="mt-3 small"></div>
                         </div>
 
-                        <div class="card p-4">
+                        <div class="card p-4 mb-4">
                             <h5 class="text-info mb-3"><i class="bi bi-cloud-arrow-down-fill"></i> <span data-i18n="updates_title">System Updates</span></h5>
                             <p class="text-muted small" data-i18n="updates_desc">Check for the latest updates from GitHub and automatically update the UPS Controller.</p>
                             <div class="d-flex flex-column gap-2 mt-2">
@@ -1657,6 +1769,24 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                 </button>
                             </div>
                             <div id="update-results" class="mt-3 small"></div>
+                        </div>
+
+                        <div class="card p-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-archive-fill"></i> <span data-i18n="backup_restore_title">Backup & Restore</span></h5>
+                            <p class="text-muted small" data-i18n="backup_restore_desc">Download a backup of all settings, admin users, and event logs, or restore from a previously saved backup file.</p>
+                            <div class="d-grid gap-3 mt-3">
+                                <button class="btn btn-outline-info text-start" onclick="downloadBackupFile()">
+                                    <i class="bi bi-download me-2"></i> <span data-i18n="btn_download_backup">Download System Backup</span>
+                                </button>
+                                <div>
+                                    <label class="form-label small text-muted" data-i18n="label_restore_file">Restore From File (.json)</label>
+                                    <input type="file" id="backup-file-input" class="form-control form-control-sm mb-2" accept=".json">
+                                    <button class="btn btn-warning w-100 fw-bold" onclick="restoreBackupFile()">
+                                        <i class="bi bi-upload me-1"></i> <span data-i18n="btn_restore_backup">Restore Backup Now</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="backup-results" class="mt-3 small"></div>
                         </div>
                     </div>
                 </div>
@@ -1842,6 +1972,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 remote_version_label: "Nieuwste Remote:",
                 btn_check_updates: "Controleer op Updates",
                 btn_apply_update: "Nu Bijwerken",
+                backup_restore_title: "Backup & Herstel",
+                backup_restore_desc: "Download een reservekopie van instellingen, beheerders en logboeken, of herstel een eerder opgeslagen bestand.",
+                btn_download_backup: "Download Systeem Backup",
+                label_restore_file: "Herstel vanuit Bestand (.json)",
+                btn_restore_backup: "Nu Herstellen",
                 users_title: "Beheerdersaccounts",
                 col_username: "Gebruikersnaam",
                 col_created: "Aangemaakt op",
@@ -1957,6 +2092,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 remote_version_label: "Latest Remote:",
                 btn_check_updates: "Check for Updates",
                 btn_apply_update: "Apply Update Now",
+                backup_restore_title: "Backup & Restore",
+                backup_restore_desc: "Download a backup of all settings, admin users, and event logs, or restore from a previously saved backup file.",
+                btn_download_backup: "Download System Backup",
+                label_restore_file: "Restore From File (.json)",
+                btn_restore_backup: "Restore Backup Now",
                 users_title: "Admin Accounts",
                 col_username: "Username",
                 col_created: "Created",
@@ -2679,6 +2819,48 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             } catch(e) {
                 resDiv.innerHTML = '<span class="text-danger">Network error during update</span>';
             }
+        }
+
+        function downloadBackupFile() {
+            window.location.href = '/api/admin/backup/download';
+        }
+
+        async function restoreBackupFile() {
+            const fileInput = document.getElementById('backup-file-input');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert(currentLang === 'nl' ? 'Selecteer eerst een .json backup-bestand!' : 'Please select a .json backup file first!');
+                return;
+            }
+
+            const confirmMsg = currentLang === 'nl' ? 'WAARSCHUWING: Het herstellen van een backup overschrijft de huidige instellingen en gebruikers. Weet u zeker dat u wilt doorgaan?' : 'WARNING: Restoring a backup overwrites current settings and users. Are you sure you want to proceed?';
+            if (!confirm(confirmMsg)) return;
+
+            const resDiv = document.getElementById('backup-results');
+            resDiv.innerHTML = '<span class="text-warning">Restoring backup...</span>';
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const parsedJson = JSON.parse(e.target.result);
+                    const res = await fetch('/api/admin/backup/restore', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                        body: JSON.stringify({ backup: parsedJson, csrf_token: csrfToken })
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        resDiv.innerHTML = `<span class="text-success fw-bold">${data.message}</span>`;
+                        alert(currentLang === 'nl' ? 'Backup succesvol hersteld!' : 'Backup successfully restored!');
+                        loadAdminData();
+                    } else {
+                        resDiv.innerHTML = `<span class="text-danger fw-bold">Restore failed: ${data.error || 'Unknown error'}</span>`;
+                    }
+                } catch(err) {
+                    resDiv.innerHTML = `<span class="text-danger">Invalid JSON file format</span>`;
+                }
+            };
+            reader.readAsText(file);
         }
     </script>
 </body>
