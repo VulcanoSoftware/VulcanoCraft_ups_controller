@@ -219,6 +219,26 @@ class Database:
             conn.commit()
             return c.rowcount > 0
 
+    def change_password(self, user_id: int, old_password: str, new_password: str) -> Tuple[bool, str]:
+        if not new_password or len(new_password) < 4:
+            return False, "New password must be at least 4 characters long"
+        with db_lock, self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            row = c.fetchone()
+            if not row:
+                return False, "User not found"
+            old_hash, _ = self.hash_password(old_password, row['salt'])
+            if not secrets.compare_digest(old_hash, row['password_hash']):
+                return False, "Incorrect current password"
+            pwd_hash, salt = self.hash_password(new_password)
+            c.execute(
+                "UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+                (pwd_hash, salt, user_id)
+            )
+            conn.commit()
+            return True, "Password updated successfully"
+
     def verify_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         with db_lock, self.get_connection() as conn:
             c = conn.cursor()
@@ -979,6 +999,12 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Unauthorized"}, 401)
                 return
             self.send_json({"users": self.db.list_users()})
+        elif path == "/api/admin/update/check":
+            session = self.authenticate_admin()
+            if not session:
+                self.send_json({"error": "Unauthorized"}, 401)
+                return
+            self.handle_check_update()
         elif path == "/api/auth/me":
             session = self.authenticate_admin()
             if session:
@@ -1080,8 +1106,63 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
             else:
                 self.send_json({"error": "Failed to delete user"}, 400)
 
+        elif path == "/api/admin/users/change-password":
+            old_p = body.get("old_password", "")
+            new_p = body.get("new_password", "")
+            if not old_p or not new_p:
+                self.send_json({"error": "Current and new password are required"}, 400)
+                return
+            ok, msg = self.db.change_password(session["user_id"], old_p, new_p)
+            if ok:
+                self.send_json({"success": True, "message": msg})
+            else:
+                self.send_json({"error": msg}, 400)
+
+        elif path == "/api/admin/update/apply":
+            self.handle_apply_update()
+
         else:
             self.send_json({"error": "Not Found"}, 404)
+
+    def handle_check_update(self):
+        try:
+            # Get current commit
+            cur_proc = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=BASE_DIR, capture_output=True, text=True, timeout=5)
+            cur_commit = cur_proc.stdout.strip() if cur_proc.returncode == 0 else "unknown"
+
+            # Fetch remote
+            fetch_proc = subprocess.run(["git", "fetch", "origin"], cwd=BASE_DIR, capture_output=True, text=True, timeout=15)
+
+            # Get remote commit
+            rem_proc = subprocess.run(["git", "rev-parse", "--short", "origin/main"], cwd=BASE_DIR, capture_output=True, text=True, timeout=5)
+            rem_commit = rem_proc.stdout.strip() if rem_proc.returncode == 0 else cur_commit
+
+            update_available = (cur_commit != "unknown" and rem_commit != "unknown" and cur_commit != rem_commit)
+            self.send_json({
+                "success": True,
+                "current_commit": cur_commit,
+                "remote_commit": rem_commit,
+                "update_available": update_available
+            })
+        except Exception as e:
+            self.send_json({"success": False, "error": str(e)}, 500)
+
+    def handle_apply_update(self):
+        try:
+            pull_proc = subprocess.run(["git", "pull", "origin", "main"], cwd=BASE_DIR, capture_output=True, text=True, timeout=30)
+            if pull_proc.returncode == 0:
+                self.controller.log_event("INFO", f"System auto-updated successfully: {pull_proc.stdout.strip()}")
+                self.send_json({
+                    "success": True,
+                    "message": "Update successfully applied! Please restart the service or it will reload on next boot.",
+                    "details": pull_proc.stdout.strip()
+                })
+            else:
+                err_msg = pull_proc.stderr.strip() or pull_proc.stdout.strip()
+                self.controller.log_event("ERROR", f"Auto-update failed: {err_msg}")
+                self.send_json({"success": False, "error": err_msg}, 500)
+        except Exception as e:
+            self.send_json({"success": False, "error": str(e)}, 500)
 
     def handle_public_stats(self):
         ups_raw = self.controller.get_ups_status()
@@ -1539,7 +1620,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     </div>
 
                     <div class="col-lg-4">
-                        <div class="card p-4">
+                        <div class="card p-4 mb-4">
                             <h5 class="text-warning mb-3"><i class="bi bi-tools"></i> <span data-i18n="admin_actions_title">Admin Manual Actions</span></h5>
                             <p class="text-muted small" data-i18n="admin_actions_desc">Execute test triggers on configured Proxmox nodes.</p>
                             <div class="d-grid gap-3 mt-3">
@@ -1551,6 +1632,31 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                 </button>
                             </div>
                             <div id="action-results" class="mt-3 small"></div>
+                        </div>
+
+                        <div class="card p-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-cloud-arrow-down-fill"></i> <span data-i18n="updates_title">System Updates</span></h5>
+                            <p class="text-muted small" data-i18n="updates_desc">Check for the latest updates from GitHub and automatically update the UPS Controller.</p>
+                            <div class="d-flex flex-column gap-2 mt-2">
+                                <div class="d-flex justify-content-between small">
+                                    <span class="text-muted" data-i18n="current_version_label">Current Version:</span>
+                                    <code id="current-commit-hash" class="text-info">--</code>
+                                </div>
+                                <div class="d-flex justify-content-between small">
+                                    <span class="text-muted" data-i18n="remote_version_label">Latest Remote:</span>
+                                    <code id="remote-commit-hash" class="text-warning">--</code>
+                                </div>
+                                <div id="update-status-msg" class="small mt-1 text-muted"></div>
+                            </div>
+                            <div class="d-grid gap-2 mt-3">
+                                <button class="btn btn-outline-info" onclick="checkForUpdates()">
+                                    <i class="bi bi-arrow-repeat me-1"></i> <span data-i18n="btn_check_updates">Check for Updates</span>
+                                </button>
+                                <button id="btn-apply-update" class="btn btn-success d-none" onclick="applySystemUpdate()">
+                                    <i class="bi bi-download me-1"></i> <span data-i18n="btn_apply_update">Apply Update Now</span>
+                                </button>
+                            </div>
+                            <div id="update-results" class="mt-3 small"></div>
                         </div>
                     </div>
                 </div>
@@ -1580,6 +1686,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         </div>
                     </div>
                     <div class="col-md-5">
+                        <div class="card p-4 mb-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-key-fill"></i> <span data-i18n="change_pw_title">Change Your Password</span></h5>
+                            <div class="form-text text-muted small mb-3" data-i18n="help_change_pw">Change the password of the currently logged-in account.</div>
+                            <form onsubmit="changeOwnPassword(event)">
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_current_password">Current Password</label>
+                                    <input type="password" id="current-password" class="form-control" required autocomplete="current-password">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_new_password">New Password</label>
+                                    <input type="password" id="change-new-password" class="form-control" required minlength="4" autocomplete="new-password">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_confirm_password">Confirm New Password</label>
+                                    <input type="password" id="confirm-new-password" class="form-control" required minlength="4" autocomplete="new-password">
+                                </div>
+                                <button type="submit" class="btn btn-info w-100 fw-bold">
+                                    <i class="bi bi-check-lg"></i> <span data-i18n="btn_change_password">Update Password</span>
+                                </button>
+                            </form>
+                        </div>
+
                         <div class="card p-4">
                             <h5 class="text-info mb-3"><i class="bi bi-person-plus"></i> <span data-i18n="create_user_title">Create Admin User</span></h5>
                             <form onsubmit="createAdminUser(event)">
@@ -1708,6 +1836,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 admin_actions_desc: "Voer test-triggers uit op geconfigureerde Proxmox nodes.",
                 btn_test_wol: "Test Wake-on-LAN Versturen",
                 btn_test_shutdown: "Test Shutdown API Versturen",
+                updates_title: "Systeem Updates",
+                updates_desc: "Controleer op de nieuwste updates via GitHub en werk de UPS Controller automatisch bij.",
+                current_version_label: "Huidige Versie:",
+                remote_version_label: "Nieuwste Remote:",
+                btn_check_updates: "Controleer op Updates",
+                btn_apply_update: "Nu Bijwerken",
                 users_title: "Beheerdersaccounts",
                 col_username: "Gebruikersnaam",
                 col_created: "Aangemaakt op",
@@ -1716,6 +1850,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 label_username: "Gebruikersnaam",
                 label_password: "Wachtwoord",
                 btn_create_account: "Account Aanmaken",
+                change_pw_title: "Eigen Wachtwoord Wijzigen",
+                help_change_pw: "Wijzig hier het wachtwoord van het momenteel ingelogde account.",
+                label_current_password: "Huidig Wachtwoord",
+                label_new_password: "Nieuw Wachtwoord",
+                label_confirm_password: "Bevestig Nieuw Wachtwoord",
+                btn_change_password: "Wachtwoord Bijwerken",
                 login_modal_title: "Admin Inloggen",
                 btn_login_submit: "Inloggen",
                 btn_delete: "Verwijderen",
@@ -1811,6 +1951,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 admin_actions_desc: "Execute test triggers on configured Proxmox nodes.",
                 btn_test_wol: "Send Test Wake-on-LAN",
                 btn_test_shutdown: "Send Test Shutdown API",
+                updates_title: "System Updates",
+                updates_desc: "Check for the latest updates from GitHub and automatically update the UPS Controller.",
+                current_version_label: "Current Version:",
+                remote_version_label: "Latest Remote:",
+                btn_check_updates: "Check for Updates",
+                btn_apply_update: "Apply Update Now",
                 users_title: "Admin Accounts",
                 col_username: "Username",
                 col_created: "Created",
@@ -1819,6 +1965,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 label_username: "Username",
                 label_password: "Password",
                 btn_create_account: "Create Account",
+                change_pw_title: "Change Your Password",
+                help_change_pw: "Change the password of the currently logged-in account.",
+                label_current_password: "Current Password",
+                label_new_password: "New Password",
+                label_confirm_password: "Confirm New Password",
+                btn_change_password: "Update Password",
                 login_modal_title: "Admin Login",
                 btn_login_submit: "Login",
                 btn_delete: "Delete",
@@ -2445,6 +2597,88 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     alert('Error: ' + (data.error || 'Failed to delete user'));
                 }
             } catch(e) { alert('Network error'); }
+        }
+
+        async function changeOwnPassword(e) {
+            e.preventDefault();
+            const curP = document.getElementById('current-password').value;
+            const newP = document.getElementById('change-new-password').value;
+            const confP = document.getElementById('confirm-new-password').value;
+
+            if (newP !== confP) {
+                alert(currentLang === 'nl' ? 'Nieuwe wachtwoorden komen niet overeen!' : 'New passwords do not match!');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/admin/users/change-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({ old_password: curP, new_password: newP, csrf_token: csrfToken })
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    alert(currentLang === 'nl' ? 'Wachtwoord succesvol gewijzigd!' : 'Password updated successfully!');
+                    document.getElementById('current-password').value = '';
+                    document.getElementById('change-new-password').value = '';
+                    document.getElementById('confirm-new-password').value = '';
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to change password'));
+                }
+            } catch(e) { alert('Network error'); }
+        }
+
+        async function checkForUpdates() {
+            const statusMsg = document.getElementById('update-status-msg');
+            const btnApply = document.getElementById('btn-apply-update');
+            statusMsg.innerText = currentLang === 'nl' ? 'Controleren op updates...' : 'Checking for updates...';
+            statusMsg.className = 'small mt-1 text-info';
+            try {
+                const res = await fetch('/api/admin/update/check');
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    document.getElementById('current-commit-hash').innerText = data.current_commit;
+                    document.getElementById('remote-commit-hash').innerText = data.remote_commit;
+                    if (data.update_available) {
+                        statusMsg.innerText = currentLang === 'nl' ? 'Nieuwe versie beschikbaar!' : 'New version available!';
+                        statusMsg.className = 'small mt-1 text-warning fw-bold';
+                        btnApply.classList.remove('d-none');
+                    } else {
+                        statusMsg.innerText = currentLang === 'nl' ? 'Systeem is up-to-date.' : 'System is up to date.';
+                        statusMsg.className = 'small mt-1 text-success fw-bold';
+                        btnApply.classList.add('d-none');
+                    }
+                } else {
+                    statusMsg.innerText = (currentLang === 'nl' ? 'Fout bij controle: ' : 'Check failed: ') + (data.error || 'Unknown error');
+                    statusMsg.className = 'small mt-1 text-danger';
+                }
+            } catch(e) {
+                statusMsg.innerText = currentLang === 'nl' ? 'Netwerkfout bij controle.' : 'Network error checking updates.';
+                statusMsg.className = 'small mt-1 text-danger';
+            }
+        }
+
+        async function applySystemUpdate() {
+            const msg = currentLang === 'nl' ? 'Weet u zeker dat u de nieuwste versie wilt binnenhalen en bijwerken?' : 'Are you sure you want to pull and apply the latest update?';
+            if (!confirm(msg)) return;
+            const resDiv = document.getElementById('update-results');
+            resDiv.innerHTML = '<span class="text-warning">Applying update...</span>';
+            try {
+                const res = await fetch('/api/admin/update/apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({ csrf_token: csrfToken })
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    resDiv.innerHTML = `<span class="text-success fw-bold">${data.message}</span>`;
+                    checkForUpdates();
+                } else {
+                    resDiv.innerHTML = `<span class="text-danger fw-bold">Update failed: ${data.error || 'Unknown error'}</span>`;
+                }
+            } catch(e) {
+                resDiv.innerHTML = '<span class="text-danger">Network error during update</span>';
+            }
         }
     </script>
 </body>

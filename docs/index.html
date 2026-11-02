@@ -417,7 +417,7 @@
                     </div>
 
                     <div class="col-lg-4">
-                        <div class="card p-4">
+                        <div class="card p-4 mb-4">
                             <h5 class="text-warning mb-3"><i class="bi bi-tools"></i> <span data-i18n="admin_actions_title">Admin Manual Actions</span></h5>
                             <p class="text-muted small" data-i18n="admin_actions_desc">Execute test triggers on configured Proxmox nodes.</p>
                             <div class="d-grid gap-3 mt-3">
@@ -429,6 +429,31 @@
                                 </button>
                             </div>
                             <div id="action-results" class="mt-3 small"></div>
+                        </div>
+
+                        <div class="card p-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-cloud-arrow-down-fill"></i> <span data-i18n="updates_title">System Updates</span></h5>
+                            <p class="text-muted small" data-i18n="updates_desc">Check for the latest updates from GitHub and automatically update the UPS Controller.</p>
+                            <div class="d-flex flex-column gap-2 mt-2">
+                                <div class="d-flex justify-content-between small">
+                                    <span class="text-muted" data-i18n="current_version_label">Current Version:</span>
+                                    <code id="current-commit-hash" class="text-info">1baec67</code>
+                                </div>
+                                <div class="d-flex justify-content-between small">
+                                    <span class="text-muted" data-i18n="remote_version_label">Latest Remote:</span>
+                                    <code id="remote-commit-hash" class="text-warning">--</code>
+                                </div>
+                                <div id="update-status-msg" class="small mt-1 text-muted"></div>
+                            </div>
+                            <div class="d-grid gap-2 mt-3">
+                                <button class="btn btn-outline-info" onclick="checkForUpdates()">
+                                    <i class="bi bi-arrow-repeat me-1"></i> <span data-i18n="btn_check_updates">Check for Updates</span>
+                                </button>
+                                <button id="btn-apply-update" class="btn btn-success d-none" onclick="applySystemUpdate()">
+                                    <i class="bi bi-download me-1"></i> <span data-i18n="btn_apply_update">Apply Update Now</span>
+                                </button>
+                            </div>
+                            <div id="update-results" class="mt-3 small"></div>
                         </div>
                     </div>
                 </div>
@@ -457,6 +482,28 @@
                         </div>
                     </div>
                     <div class="col-md-5">
+                        <div class="card p-4 mb-4">
+                            <h5 class="text-info mb-3"><i class="bi bi-key-fill"></i> <span data-i18n="change_pw_title">Change Your Password</span></h5>
+                            <div class="form-text text-muted small mb-3" data-i18n="help_change_pw">Change the password of the currently logged-in account.</div>
+                            <form onsubmit="changeOwnPassword(event)">
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_current_password">Current Password</label>
+                                    <input type="password" id="current-password" class="form-control" required autocomplete="current-password">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_new_password">New Password</label>
+                                    <input type="password" id="change-new-password" class="form-control" required minlength="4" autocomplete="new-password">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" data-i18n="label_confirm_password">Confirm New Password</label>
+                                    <input type="password" id="confirm-new-password" class="form-control" required minlength="4" autocomplete="new-password">
+                                </div>
+                                <button type="submit" class="btn btn-info w-100 fw-bold">
+                                    <i class="bi bi-check-lg"></i> <span data-i18n="btn_change_password">Update Password</span>
+                                </button>
+                            </form>
+                        </div>
+
                         <div class="card p-4">
                             <h5 class="text-info mb-3"><i class="bi bi-person-plus"></i> <span data-i18n="create_user_title">Create Admin User</span></h5>
                             <form onsubmit="createAdminUser(event)">
@@ -641,6 +688,12 @@
                 admin_actions_desc: "Voer test-triggers uit op geconfigureerde Proxmox nodes.",
                 btn_test_wol: "Test Wake-on-LAN Versturen",
                 btn_test_shutdown: "Test Shutdown API Versturen",
+                updates_title: "Systeem Updates",
+                updates_desc: "Controleer op de nieuwste updates via GitHub en werk de UPS Controller automatisch bij.",
+                current_version_label: "Huidige Versie:",
+                remote_version_label: "Nieuwste Remote:",
+                btn_check_updates: "Controleer op Updates",
+                btn_apply_update: "Nu Bijwerken",
                 users_title: "Beheerdersaccounts",
                 col_username: "Gebruikersnaam",
                 col_created: "Aangemaakt op",
@@ -649,6 +702,12 @@
                 label_username: "Gebruikersnaam",
                 label_password: "Wachtwoord",
                 btn_create_account: "Account Aanmaken",
+                change_pw_title: "Eigen Wachtwoord Wijzigen",
+                help_change_pw: "Wijzig hier het wachtwoord van het momenteel ingelogde account.",
+                label_current_password: "Huidig Wachtwoord",
+                label_new_password: "Nieuw Wachtwoord",
+                label_confirm_password: "Bevestig Nieuw Wachtwoord",
+                btn_change_password: "Wachtwoord Bijwerken",
                 login_modal_title: "Admin Inloggen",
                 btn_login_submit: "Inloggen",
                 btn_delete: "Verwijderen",
@@ -748,6 +807,12 @@
                 admin_actions_desc: "Execute test triggers on configured Proxmox nodes.",
                 btn_test_wol: "Send Test Wake-on-LAN",
                 btn_test_shutdown: "Send Test Shutdown API",
+                updates_title: "System Updates",
+                updates_desc: "Check for the latest updates from GitHub and automatically update the UPS Controller.",
+                current_version_label: "Current Version:",
+                remote_version_label: "Latest Remote:",
+                btn_check_updates: "Check for Updates",
+                btn_apply_update: "Apply Update Now",
                 users_title: "Admin Accounts",
                 col_username: "Username",
                 col_created: "Created",
@@ -756,6 +821,12 @@
                 label_username: "Username",
                 label_password: "Password",
                 btn_create_account: "Create Account",
+                change_pw_title: "Change Your Password",
+                help_change_pw: "Change the password of the currently logged-in account.",
+                label_current_password: "Current Password",
+                label_new_password: "New Password",
+                label_confirm_password: "Confirm New Password",
+                btn_change_password: "Update Password",
                 login_modal_title: "Admin Login",
                 btn_login_submit: "Login",
                 btn_delete: "Delete",
@@ -1231,6 +1302,56 @@
 
             users = users.filter(u => u.id !== userId);
             loadUsersList();
+        }
+
+        function changeOwnPassword(e) {
+            e.preventDefault();
+            const curP = document.getElementById('current-password').value;
+            const newP = document.getElementById('change-new-password').value;
+            const confP = document.getElementById('confirm-new-password').value;
+
+            if (newP !== confP) {
+                alert(currentLang === 'nl' ? 'Nieuwe wachtwoorden komen niet overeen!' : 'New passwords do not match!');
+                return;
+            }
+
+            const activeUser = users.find(u => u.username === authUser);
+            if (!activeUser || activeUser.password !== curP) {
+                alert(currentLang === 'nl' ? 'Huidig wachtwoord is onjuist!' : 'Incorrect current password!');
+                return;
+            }
+
+            activeUser.password = newP;
+            document.getElementById('current-password').value = '';
+            document.getElementById('change-new-password').value = '';
+            document.getElementById('confirm-new-password').value = '';
+            alert(currentLang === 'nl' ? 'Wachtwoord succesvol gewijzigd!' : 'Password updated successfully!');
+        }
+
+        function checkForUpdates() {
+            const statusMsg = document.getElementById('update-status-msg');
+            const btnApply = document.getElementById('btn-apply-update');
+            statusMsg.innerText = currentLang === 'nl' ? 'Controleren op updates...' : 'Checking for updates...';
+            statusMsg.className = 'small mt-1 text-info';
+
+            setTimeout(() => {
+                document.getElementById('current-commit-hash').innerText = '1baec67';
+                document.getElementById('remote-commit-hash').innerText = '1baec67';
+                statusMsg.innerText = currentLang === 'nl' ? 'Systeem is up-to-date.' : 'System is up to date.';
+                statusMsg.className = 'small mt-1 text-success fw-bold';
+                btnApply.classList.add('d-none');
+            }, 600);
+        }
+
+        function applySystemUpdate() {
+            const msg = currentLang === 'nl' ? 'Weet u zeker dat u de nieuwste versie wilt binnenhalen en bijwerken?' : 'Are you sure you want to pull and apply the latest update?';
+            if (!confirm(msg)) return;
+            const resDiv = document.getElementById('update-results');
+            resDiv.innerHTML = '<span class="text-warning">Applying update...</span>';
+            setTimeout(() => {
+                resDiv.innerHTML = '<span class="text-success fw-bold">Update successfully applied! (Demo showcase simulated)</span>';
+                checkForUpdates();
+            }, 800);
         }
     </script>
 </body>
