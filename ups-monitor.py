@@ -741,7 +741,7 @@ class UPSController:
                 timeout=5,
             )
             if result.returncode == 0:
-                self.log_event("INFO", f"WoL sent to {node.name} ({node.mac})")
+                self.log_event("INFO", f"WoL sent to {node.name} ({node.host})")
                 return True
         except Exception:
             pass
@@ -753,7 +753,7 @@ class UPSController:
                 ip_address=self.cfg["wol"]["broadcast"],
                 port=self.cfg["wol"].get("port", 9),
             )
-            self.log_event("INFO", f"WoL (python) sent to {node.name} ({node.mac})")
+            self.log_event("INFO", f"WoL (python) sent to {node.name} ({node.host})")
             return True
         except Exception as e:
             self.log_event("ERROR", f"WoL failed for {node.name}: {e}")
@@ -1278,7 +1278,11 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
 
     def handle_public_stats(self):
         ups_raw = self.controller.get_ups_status()
-        safe_nodes = [{"name": n.name, "host": n.host, "mac": n.mac} for n in self.controller.nodes]
+        is_admin = bool(self.authenticate_admin())
+        if is_admin:
+            safe_nodes = [{"name": n.name, "host": n.host, "mac": n.mac} for n in self.controller.nodes]
+        else:
+            safe_nodes = [{"name": n.name, "host": n.host} for n in self.controller.nodes]
 
         status_code = ups_raw.get("ups.status", "UNKNOWN")
         charge = ups_raw.get("battery.charge", "N/A")
@@ -1316,6 +1320,16 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
 
     def handle_public_events(self):
         events = self.db.get_recent_events(30)
+        is_admin = bool(self.authenticate_admin())
+        if not is_admin:
+            mac_regex = re.compile(r"([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})")
+            cleaned_events = []
+            for ev in events:
+                item = dict(ev)
+                if "message" in item and isinstance(item["message"], str):
+                    item["message"] = mac_regex.sub("**:**:**:**:**:**", item["message"])
+                cleaned_events.append(item)
+            events = cleaned_events
         self.send_json({"events": events})
 
 
@@ -2265,6 +2279,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             document.getElementById('btn-login-modal').classList.add('d-none');
             document.getElementById('btn-logout').classList.remove('d-none');
             document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('d-none'));
+            fetchPublicStats();
+            fetchPublicEvents();
             loadAdminData();
         }
 
@@ -2276,6 +2292,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             document.getElementById('btn-login-modal').classList.remove('d-none');
             document.getElementById('btn-logout').classList.add('d-none');
             document.querySelectorAll('.admin-only').forEach(el => el.classList.add('d-none'));
+            fetchPublicStats();
+            fetchPublicEvents();
         }
 
         function openLoginModal() {
@@ -2353,15 +2371,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 // Render Nodes Summary
                 const langDict = i18n[currentLang] || i18n.nl;
                 const nodesContainer = document.getElementById('nodes-list');
-                nodesContainer.innerHTML = data.nodes_summary.map(n => `
+                nodesContainer.innerHTML = data.nodes_summary.map(n => {
+                    const macInfo = (authUser && n.mac) ? ` (${n.mac})` : '';
+                    return `
                     <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-dark rounded border border-secondary">
                         <div>
                             <span class="fw-bold text-light">${n.name}</span>
-                            <div class="text-muted small">${n.host} (${n.mac})</div>
+                            <div class="text-muted small">${n.host}${macInfo}</div>
                         </div>
                         <span class="badge bg-success"><i class="bi bi-check-circle"></i> ${langDict.registered}</span>
                     </div>
-                `).join('');
+                `;
+                }).join('');
 
                 if (data.nut_all) {
                     rawNutData = data.nut_all;

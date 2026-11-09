@@ -191,6 +191,79 @@ class TestUpdateEndpoints(unittest.TestCase):
             self.assertIn("current_commit", data)
 
 
+class TestMacAddressProtection(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.db = ups_monitor.Database(Path(tempfile.mktemp(suffix=".db")))
+        cls.db.create_user("admin", "admin123")
+        user = cls.db.verify_user("admin", "admin123")
+        cls.token, cls.csrf = cls.db.create_session(user["id"])
+
+        default_cfg = yaml_helper_default_config()
+        cls.controller = ups_monitor.UPSController(default_cfg, cls.db)
+
+        # Log an event containing a MAC address to test event filtering
+        cls.controller.log_event("INFO", "Node pve1 woke up with mac aa:bb:cc:dd:ee:ff successfully")
+
+        ups_monitor.WebDashboardHandler.controller = cls.controller
+        ups_monitor.WebDashboardHandler.db = cls.db
+
+        cls.server = ups_monitor.ThreadedHTTPServer(("127.0.0.1", 0), ups_monitor.WebDashboardHandler)
+        cls.port = cls.server.server_address[1]
+        cls.server_thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.server_thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    def test_unauthenticated_stats_omits_mac(self):
+        url = f"http://127.0.0.1:{self.port}/api/public/stats"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode())
+            nodes = data.get("nodes_summary", [])
+            self.assertTrue(len(nodes) > 0)
+            for node in nodes:
+                self.assertNotIn("mac", node)
+                self.assertIn("name", node)
+                self.assertIn("host", node)
+
+    def test_authenticated_stats_includes_mac(self):
+        url = f"http://127.0.0.1:{self.port}/api/public/stats"
+        req = urllib.request.Request(url, headers={"Cookie": f"session_token={self.token}"})
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode())
+            nodes = data.get("nodes_summary", [])
+            self.assertTrue(len(nodes) > 0)
+            for node in nodes:
+                self.assertIn("mac", node)
+                self.assertEqual(node["name"], "pve1" if node["host"] == "192.168.1.10" else "pve2")
+
+    def test_unauthenticated_events_redacts_mac(self):
+        url = f"http://127.0.0.1:{self.port}/api/public/events"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode())
+            events = data.get("events", [])
+            mac_regex = ups_monitor.re.compile(r"([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})")
+            for ev in events:
+                self.assertFalse(mac_regex.search(ev.get("message", "")))
+
+    def test_authenticated_events_retains_mac(self):
+        url = f"http://127.0.0.1:{self.port}/api/public/events"
+        req = urllib.request.Request(url, headers={"Cookie": f"session_token={self.token}"})
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode())
+            events = data.get("events", [])
+            matched = any("aa:bb:cc:dd:ee:ff" in ev.get("message", "") for ev in events)
+            self.assertTrue(matched)
+
+
 class TestBackupRestore(unittest.TestCase):
     def setUp(self):
         self.tmp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")

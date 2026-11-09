@@ -1090,15 +1090,18 @@
         function renderNodesList() {
             const langDict = i18n[currentLang] || i18n.nl;
             const nodesContainer = document.getElementById('nodes-list');
-            nodesContainer.innerHTML = nodesList.map(n => `
+            nodesContainer.innerHTML = nodesList.map(n => {
+                const macInfo = (authUser && n.mac) ? ` (${n.mac})` : '';
+                return `
                 <div class="d-flex align-items-center justify-content-between p-2 mb-2 bg-dark rounded border border-secondary">
                     <div>
                         <span class="fw-bold text-light">${n.name}</span>
-                        <div class="text-muted small">${n.host} (${n.mac})</div>
+                        <div class="text-muted small">${n.host}${macInfo}</div>
                     </div>
                     <span class="badge bg-success"><i class="bi bi-check-circle"></i> ${langDict.registered}</span>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
 
         function renderNutTable(nutObj) {
@@ -1129,16 +1132,18 @@
 
         function renderEvents() {
             const tbody = document.getElementById('events-table-body');
+            const macRegex = /([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})/g;
             tbody.innerHTML = eventLogs.map(ev => {
                 let lvlBadge = 'bg-secondary';
                 if (ev.level === 'WARNING') lvlBadge = 'bg-warning text-dark';
                 if (ev.level === 'ERROR' || ev.level === 'CRITICAL') lvlBadge = 'bg-danger';
                 if (ev.level === 'INFO') lvlBadge = 'bg-info text-dark';
+                const msg = authUser ? ev.message : (typeof ev.message === 'string' ? ev.message.replace(macRegex, '**:**:**:**:**:**') : ev.message);
                 return `
                     <tr>
                         <td class="text-muted small">${new Date(ev.timestamp * 1000).toLocaleString()}</td>
                         <td><span class="badge ${lvlBadge}">${ev.level}</span></td>
-                        <td>${ev.message}</td>
+                        <td>${msg}</td>
                     </tr>
                 `;
             }).join('');
@@ -1157,6 +1162,8 @@
             document.getElementById('btn-login-modal').classList.add('d-none');
             document.getElementById('btn-logout').classList.remove('d-none');
             document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('d-none'));
+            renderNodesList();
+            renderEvents();
         }
 
         function setLoggedOut() {
@@ -1166,6 +1173,8 @@
             document.getElementById('btn-login-modal').classList.remove('d-none');
             document.getElementById('btn-logout').classList.add('d-none');
             document.querySelectorAll('.admin-only').forEach(el => el.classList.add('d-none'));
+            renderNodesList();
+            renderEvents();
         }
 
         function handleLogin(e) {
