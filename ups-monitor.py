@@ -339,6 +339,36 @@ class Database:
             rows.reverse()
             return rows
 
+    def get_stats_by_range(self, range_seconds: Optional[int] = None, max_points: int = 300) -> List[Dict[str, Any]]:
+        with db_lock, self.get_connection() as conn:
+            c = conn.cursor()
+            if range_seconds is None or range_seconds <= 0:
+                c.execute("SELECT * FROM stats ORDER BY timestamp ASC")
+            else:
+                since = time.time() - range_seconds
+                c.execute("SELECT * FROM stats WHERE timestamp >= ? ORDER BY timestamp ASC", (since,))
+            rows = [dict(r) for r in c.fetchall()]
+
+        if len(rows) <= max_points:
+            return rows
+
+        # Downsample rows while preserving signal markers (SHUTDOWN, WOL, etc.)
+        step = len(rows) / float(max_points)
+        sampled_indices = set()
+        for i in range(max_points):
+            idx = min(int(i * step), len(rows) - 1)
+            sampled_indices.add(idx)
+        # Always include the very last data point
+        sampled_indices.add(len(rows) - 1)
+
+        # Also preserve any events with a non-empty signal
+        for idx, row in enumerate(rows):
+            if row.get("signal"):
+                sampled_indices.add(idx)
+
+        sampled_rows = [rows[i] for i in sorted(sampled_indices)]
+        return sampled_rows
+
     def get_recent_events(self, count: int = 50) -> List[Dict[str, Any]]:
         with db_lock, self.get_connection() as conn:
             c = conn.cursor()
@@ -1315,7 +1345,31 @@ class WebDashboardHandler(BaseHTTPRequestHandler):
         self.send_json({"nut_variables": ups_raw})
 
     def handle_public_history(self):
-        stats = self.db.get_latest_stats(60)
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        range_val = params.get("range", [None])[0]
+
+        range_seconds_map = {
+            "15m": 15 * 60,
+            "1h": 3600,
+            "6h": 6 * 3600,
+            "24h": 24 * 3600,
+            "7d": 7 * 86400,
+            "all": 0
+        }
+
+        if range_val in range_seconds_map:
+            range_secs = range_seconds_map[range_val]
+            stats = self.db.get_stats_by_range(range_secs)
+        elif range_val:
+            try:
+                range_secs = int(range_val)
+                stats = self.db.get_stats_by_range(range_secs)
+            except ValueError:
+                stats = self.db.get_latest_stats(60)
+        else:
+            stats = self.db.get_latest_stats(60)
+
         self.send_json({"history": stats})
 
     def handle_public_events(self):
@@ -1475,11 +1529,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <div class="row g-4">
                     <div class="col-lg-8">
                         <div class="card p-3">
-                            <div class="card-header bg-transparent px-0 pt-0 text-info d-flex justify-content-between align-items-center">
+                            <div class="card-header bg-transparent px-0 pt-0 text-info d-flex flex-wrap justify-content-between align-items-center gap-2">
                                 <span><i class="bi bi-activity"></i> <span data-i18n="chart_title">Live Battery & Load Chart</span></span>
-                                <div class="d-flex gap-2">
-                                    <span class="chart-legend-badge signal-indicator-shutdown"><i class="bi bi-triangle-fill fs-6"></i> <span data-i18n="signal_shutdown_legend">Shutdown Packets</span></span>
-                                    <span class="chart-legend-badge signal-indicator-wol"><i class="bi bi-square-fill fs-6"></i> <span data-i18n="signal_wol_legend">WoL Packets</span></span>
+                                <div class="d-flex flex-wrap align-items-center gap-2">
+                                    <div class="btn-group btn-group-sm" role="group" id="chart-range-selector">
+                                        <button type="button" class="btn btn-outline-info py-0 px-2" data-range="15m" onclick="setChartRange('15m')">15m</button>
+                                        <button type="button" class="btn btn-outline-info py-0 px-2 active" data-range="1h" onclick="setChartRange('1h')">1h</button>
+                                        <button type="button" class="btn btn-outline-info py-0 px-2" data-range="6h" onclick="setChartRange('6h')">6h</button>
+                                        <button type="button" class="btn btn-outline-info py-0 px-2" data-range="24h" onclick="setChartRange('24h')">24h</button>
+                                        <button type="button" class="btn btn-outline-info py-0 px-2" data-range="7d" onclick="setChartRange('7d')">7d</button>
+                                        <button type="button" class="btn btn-outline-info py-0 px-2" data-range="all" onclick="setChartRange('all')" data-i18n="range_all">All</button>
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <span class="chart-legend-badge signal-indicator-shutdown"><i class="bi bi-triangle-fill fs-6"></i> <span data-i18n="signal_shutdown_legend">Shutdown Packets</span></span>
+                                        <span class="chart-legend-badge signal-indicator-wol"><i class="bi bi-square-fill fs-6"></i> <span data-i18n="signal_wol_legend">WoL Packets</span></span>
+                                    </div>
                                 </div>
                             </div>
                             <div style="height: 280px;">
@@ -1908,6 +1972,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         let fullConfig = null;
         let rawNutData = {};
         let currentLang = localStorage.getItem('ups_lang') || 'nl';
+        let currentChartRange = localStorage.getItem('ups_chart_range') || '1h';
 
         const i18n = {
             nl: {
@@ -1927,6 +1992,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 threshold: "Drempelwaarde",
                 input_v: "Ingang",
                 chart_title: "Live Accu & Belasting Grafiek",
+                range_all: "Alles",
                 signal_shutdown_legend: "Shutdown Signaal",
                 signal_wol_legend: "WoL Signaal",
                 monitored_nodes: "Gemonitorde Proxmox Nodes",
@@ -2047,6 +2113,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 threshold: "Threshold",
                 input_v: "Input",
                 chart_title: "Live Battery & Load Chart",
+                range_all: "All",
                 signal_shutdown_legend: "Shutdown Signal",
                 signal_wol_legend: "WoL Signal",
                 monitored_nodes: "Monitored Proxmox Nodes",
@@ -2155,12 +2222,33 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         document.addEventListener("DOMContentLoaded", () => {
             setLanguage(currentLang);
             initChart();
+            updateChartRangeButtons();
             checkAuth();
             fetchPublicStats();
             fetchPublicEvents();
             setInterval(fetchPublicStats, 3000);
             setInterval(fetchPublicEvents, 10000);
         });
+
+        function setChartRange(range) {
+            currentChartRange = range;
+            localStorage.setItem('ups_chart_range', range);
+            updateChartRangeButtons();
+            fetchChartHistory();
+        }
+
+        function updateChartRangeButtons() {
+            const container = document.getElementById('chart-range-selector');
+            if (!container) return;
+            const buttons = container.querySelectorAll('button');
+            buttons.forEach(btn => {
+                if (btn.getAttribute('data-range') === currentChartRange) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
 
         function setLanguage(lang) {
             currentLang = lang;
@@ -2421,9 +2509,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         async function fetchChartHistory() {
             try {
-                const res = await fetch('/api/public/history');
+                const url = `/api/public/history?range=${encodeURIComponent(currentChartRange)}`;
+                const res = await fetch(url);
                 const data = await res.json();
-                const labels = data.history.map(item => new Date(item.timestamp * 1000).toLocaleTimeString());
+                const isLongRange = ['24h', '7d', 'all'].includes(currentChartRange);
+                const labels = data.history.map(item => {
+                    const d = new Date(item.timestamp * 1000);
+                    if (isLongRange) {
+                        const day = String(d.getDate()).padStart(2, '0');
+                        const month = String(d.getMonth() + 1).padStart(2, '0');
+                        const hours = String(d.getHours()).padStart(2, '0');
+                        const mins = String(d.getMinutes()).padStart(2, '0');
+                        return `${day}-${month} ${hours}:${mins}`;
+                    }
+                    return d.toLocaleTimeString();
+                });
                 const charges = data.history.map(item => item.charge);
                 const loads = data.history.map(item => item.load);
 

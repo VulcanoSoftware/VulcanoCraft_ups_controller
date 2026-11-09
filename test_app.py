@@ -302,6 +302,116 @@ class TestBackupRestore(unittest.TestCase):
         self.assertIn("Invalid backup", msg)
 
 
+class TestChartHistoryRange(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        cls.tmp_db.close()
+        cls.db = ups_monitor.Database(Path(cls.tmp_db.name))
+
+        # Populate with test stats across different time offsets
+        now = time.time()
+        with ups_monitor.db_lock, cls.db.get_connection() as conn:
+            # Insert point 2 days ago
+            conn.cursor().execute("INSERT INTO stats (timestamp, status, charge, runtime, load, input_voltage, output_voltage, signal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (now - 172800, "ONLINE", 100, 3600, 20, 230, 230, None))
+            # Insert point 12 hours ago
+            conn.cursor().execute("INSERT INTO stats (timestamp, status, charge, runtime, load, input_voltage, output_voltage, signal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (now - 43200, "ONLINE", 95, 3400, 22, 230, 230, None))
+            # Insert point 2 hours ago with a SHUTDOWN signal
+            conn.cursor().execute("INSERT INTO stats (timestamp, status, charge, runtime, load, input_voltage, output_voltage, signal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (now - 7200, "ONBATT", 50, 1800, 25, 0, 230, "SHUTDOWN"))
+            # Insert point 30 minutes ago with a WOL signal
+            conn.cursor().execute("INSERT INTO stats (timestamp, status, charge, runtime, load, input_voltage, output_voltage, signal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (now - 1800, "ONLINE", 80, 2800, 20, 230, 230, "WOL"))
+            # Insert point 5 minutes ago
+            conn.cursor().execute("INSERT INTO stats (timestamp, status, charge, runtime, load, input_voltage, output_voltage, signal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (now - 300, "ONLINE", 99, 3500, 15, 230, 230, None))
+            conn.commit()
+
+        default_cfg = yaml_helper_default_config()
+        cls.controller = ups_monitor.UPSController(default_cfg, cls.db)
+
+        ups_monitor.WebDashboardHandler.controller = cls.controller
+        ups_monitor.WebDashboardHandler.db = cls.db
+
+        cls.server = ups_monitor.ThreadedHTTPServer(("127.0.0.1", 0), ups_monitor.WebDashboardHandler)
+        cls.port = cls.server.server_address[1]
+        cls.server_thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.server_thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        if os.path.exists(cls.tmp_db.name):
+            os.unlink(cls.tmp_db.name)
+
+    def test_db_get_stats_by_range_intervals(self):
+        # 15 minutes range should only get the point from 5 minutes ago
+        res_15m = self.db.get_stats_by_range(15 * 60)
+        self.assertEqual(len(res_15m), 1)
+        self.assertEqual(res_15m[0]["charge"], 99)
+
+        # 1 hour range should include 30m ago and 5m ago
+        res_1h = self.db.get_stats_by_range(3600)
+        self.assertEqual(len(res_1h), 2)
+        self.assertEqual(res_1h[0]["signal"], "WOL")
+
+        # 6 hours range should include 2h ago (SHUTDOWN), 30m ago, 5m ago
+        res_6h = self.db.get_stats_by_range(6 * 3600)
+        self.assertEqual(len(res_6h), 3)
+
+        # 24 hours range should include 12h, 2h, 30m, 5m
+        res_24h = self.db.get_stats_by_range(24 * 3600)
+        self.assertEqual(len(res_24h), 4)
+
+        # All (0 or None) should return all 5 points
+        res_all = self.db.get_stats_by_range(0)
+        self.assertEqual(len(res_all), 5)
+
+    def test_db_get_stats_downsampling_preserves_signals(self):
+        # Insert 400 points
+        now = time.time()
+        with ups_monitor.db_lock, self.db.get_connection() as conn:
+            for i in range(400):
+                sig = "SHUTDOWN" if i == 150 else ("WOL" if i == 250 else None)
+                conn.cursor().execute(
+                    "INSERT INTO stats (timestamp, status, charge, runtime, load, input_voltage, output_voltage, signal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (now + i, "ONLINE", 100, 3600, 20, 230, 230, sig)
+                )
+            conn.commit()
+
+        res = self.db.get_stats_by_range(max_points=50)
+        # Should be downsampled to roughly 50 points
+        self.assertTrue(len(res) <= 60)
+        # Signals must be preserved
+        signals = [r["signal"] for r in res if r.get("signal")]
+        self.assertIn("SHUTDOWN", signals)
+        self.assertIn("WOL", signals)
+
+    def test_api_public_history_range_query(self):
+        # Test query parameter ?range=15m
+        url = f"http://127.0.0.1:{self.port}/api/public/history?range=15m"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode())
+            self.assertIn("history", data)
+            self.assertTrue(isinstance(data["history"], list))
+
+        # Test query parameter ?range=24h
+        url = f"http://127.0.0.1:{self.port}/api/public/history?range=24h"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode())
+            self.assertIn("history", data)
+            self.assertTrue(len(data["history"]) > 0)
+
+        # Test default when no range is provided
+        url = f"http://127.0.0.1:{self.port}/api/public/history"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode())
+            self.assertIn("history", data)
+
+
 def yaml_helper_default_config():
     import yaml
     return yaml.safe_load(ups_monitor.CONFIG_TEMPLATE)
