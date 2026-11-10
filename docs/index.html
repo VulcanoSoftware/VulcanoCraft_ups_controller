@@ -155,11 +155,21 @@
                 <div class="row g-4">
                     <div class="col-lg-8">
                         <div class="card p-3">
-                            <div class="card-header bg-transparent px-0 pt-0 text-info d-flex justify-content-between align-items-center">
+                            <div class="card-header bg-transparent px-0 pt-0 text-info d-flex flex-wrap justify-content-between align-items-center gap-2">
                                 <span><i class="bi bi-activity"></i> <span data-i18n="chart_title">Live Battery & Load Chart</span></span>
-                                <div class="d-flex gap-2">
-                                    <span class="chart-legend-badge signal-indicator-shutdown"><i class="bi bi-triangle-fill fs-6"></i> <span data-i18n="signal_shutdown_legend">Shutdown Packets</span></span>
-                                    <span class="chart-legend-badge signal-indicator-wol"><i class="bi bi-square-fill fs-6"></i> <span data-i18n="signal_wol_legend">WoL Packets</span></span>
+                                <div class="d-flex flex-wrap align-items-center gap-2">
+                                    <div class="btn-group btn-group-sm" role="group" id="chart-range-selector">
+                                        <button type="button" class="btn btn-outline-info py-0 px-2" data-range="15m" onclick="setChartRange('15m')">15m</button>
+                                        <button type="button" class="btn btn-outline-info py-0 px-2 active" data-range="1h" onclick="setChartRange('1h')">1h</button>
+                                        <button type="button" class="btn btn-outline-info py-0 px-2" data-range="6h" onclick="setChartRange('6h')">6h</button>
+                                        <button type="button" class="btn btn-outline-info py-0 px-2" data-range="24h" onclick="setChartRange('24h')">24h</button>
+                                        <button type="button" class="btn btn-outline-info py-0 px-2" data-range="7d" onclick="setChartRange('7d')">7d</button>
+                                        <button type="button" class="btn btn-outline-info py-0 px-2" data-range="all" onclick="setChartRange('all')" data-i18n="range_all">All</button>
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <span class="chart-legend-badge signal-indicator-shutdown"><i class="bi bi-triangle-fill fs-6"></i> <span data-i18n="signal_shutdown_legend">Shutdown Packets</span></span>
+                                        <span class="chart-legend-badge signal-indicator-wol"><i class="bi bi-square-fill fs-6"></i> <span data-i18n="signal_wol_legend">WoL Packets</span></span>
+                                    </div>
                                 </div>
                             </div>
                             <div style="height: 280px;">
@@ -578,6 +588,7 @@
         let chart = null;
         let historyData = [];
         let currentLang = localStorage.getItem('ups_lang') || 'nl';
+        let currentChartRange = localStorage.getItem('ups_chart_range') || '1h';
         let nodesList = [
             { name: 'pve1', host: '192.168.1.10', mac: 'aa:bb:cc:dd:ee:ff' },
             { name: 'pve2', host: '192.168.1.11', mac: '11:22:33:44:55:66' }
@@ -653,6 +664,7 @@
                 threshold: "Drempelwaarde",
                 input_v: "Ingang",
                 chart_title: "Live Accu & Belasting Grafiek",
+                range_all: "Alles",
                 signal_shutdown_legend: "Shutdown Signaal",
                 signal_wol_legend: "WoL Signaal",
                 monitored_nodes: "Gemonitorde Proxmox Nodes",
@@ -777,6 +789,7 @@
                 threshold: "Threshold",
                 input_v: "Input",
                 chart_title: "Live Battery & Load Chart",
+                range_all: "All",
                 signal_shutdown_legend: "Shutdown Signal",
                 signal_wol_legend: "WoL Signal",
                 monitored_nodes: "Monitored Proxmox Nodes",
@@ -885,6 +898,7 @@
         document.addEventListener("DOMContentLoaded", () => {
             setLanguage(currentLang);
             initChart();
+            updateChartRangeButtons();
             renderEvents();
             renderNodesList();
             renderNodeEditorRows(nodesList);
@@ -892,6 +906,27 @@
             loadUsersList();
             setInterval(updateDemoLoop, 2000);
         });
+
+        function setChartRange(range) {
+            currentChartRange = range;
+            localStorage.setItem('ups_chart_range', range);
+            updateChartRangeButtons();
+            generateDemoHistory();
+            updateChartDisplay();
+        }
+
+        function updateChartRangeButtons() {
+            const container = document.getElementById('chart-range-selector');
+            if (!container) return;
+            const buttons = container.querySelectorAll('button');
+            buttons.forEach(btn => {
+                if (btn.getAttribute('data-range') === currentChartRange) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
 
         function setLanguage(lang) {
             currentLang = lang;
@@ -929,16 +964,75 @@
             renderNodesList();
         }
 
-        function initChart() {
-            const ctx = document.getElementById('liveChart').getContext('2d');
-            for(let i=12; i>=0; i--) {
+        function formatPointLabel(timestampMs, isLongRange) {
+            const d = new Date(timestampMs);
+            if (isLongRange) {
+                const day = String(d.getDate()).padStart(2, '0');
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const hours = String(d.getHours()).padStart(2, '0');
+                const mins = String(d.getMinutes()).padStart(2, '0');
+                return `${day}-${month} ${hours}:${mins}`;
+            }
+            return d.toLocaleTimeString();
+        }
+
+        function generateDemoHistory() {
+            historyData = [];
+            const now = Date.now();
+            const isLongRange = ['24h', '7d', 'all'].includes(currentChartRange);
+
+            let totalSecs = 3600;
+            let points = 25;
+            if (currentChartRange === '15m') { totalSecs = 15 * 60; points = 20; }
+            else if (currentChartRange === '1h') { totalSecs = 3600; points = 25; }
+            else if (currentChartRange === '6h') { totalSecs = 6 * 3600; points = 30; }
+            else if (currentChartRange === '24h') { totalSecs = 24 * 3600; points = 35; }
+            else if (currentChartRange === '7d' || currentChartRange === 'all') { totalSecs = 7 * 86400; points = 40; }
+
+            const stepMs = (totalSecs * 1000) / points;
+            for (let i = points; i >= 1; i--) {
+                const ts = now - i * stepMs;
+                const chargeVal = isPowerOnline ? 100 : Math.min(100, batteryCharge + (i * 1.5));
                 historyData.push({
-                    time: new Date(Date.now() - i*10000).toLocaleTimeString(),
-                    charge: 100,
+                    timestamp: ts,
+                    time: formatPointLabel(ts, isLongRange),
+                    charge: Math.round(chargeVal),
                     load: 15,
                     signal: null
                 });
             }
+            // Add current point
+            historyData.push({
+                timestamp: now,
+                time: formatPointLabel(now, isLongRange),
+                charge: Math.round(batteryCharge),
+                load: 15,
+                signal: null
+            });
+        }
+
+        function updateChartDisplay() {
+            if (!chart) return;
+            chart.data.labels = historyData.map(d => d.time);
+            chart.data.datasets[0].data = historyData.map(d => d.charge);
+            chart.data.datasets[0].pointBackgroundColor = historyData.map(d => {
+                if (d.signal === 'SHUTDOWN') return '#ef4444';
+                if (d.signal === 'WOL') return '#10b981';
+                return '#38bdf8';
+            });
+            chart.data.datasets[0].pointStyle = historyData.map(d => {
+                if (d.signal === 'SHUTDOWN') return 'triangle';
+                if (d.signal === 'WOL') return 'rectRot';
+                return 'circle';
+            });
+            chart.data.datasets[0].pointRadius = historyData.map(d => (d.signal ? 10 : 2));
+            chart.data.datasets[1].data = historyData.map(d => d.load);
+            chart.update('none');
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('liveChart').getContext('2d');
+            generateDemoHistory();
             chart = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -1066,25 +1160,13 @@
                 if (stateIcon) stateIcon.className = "bi bi-exclamation-triangle-fill fs-2 text-warning";
             }
 
-            const nowStr = new Date().toLocaleTimeString();
+            const isLongRange = ['24h', '7d', 'all'].includes(currentChartRange);
+            const nowMs = Date.now();
+            const nowStr = formatPointLabel(nowMs, isLongRange);
             historyData.shift();
-            historyData.push({ time: nowStr, charge: batteryCharge, load: 15, signal: currentSignal });
+            historyData.push({ timestamp: nowMs, time: nowStr, charge: batteryCharge, load: 15, signal: currentSignal });
 
-            chart.data.labels = historyData.map(d => d.time);
-            chart.data.datasets[0].data = historyData.map(d => d.charge);
-            chart.data.datasets[0].pointBackgroundColor = historyData.map(d => {
-                if (d.signal === 'SHUTDOWN') return '#ef4444';
-                if (d.signal === 'WOL') return '#10b981';
-                return '#38bdf8';
-            });
-            chart.data.datasets[0].pointStyle = historyData.map(d => {
-                if (d.signal === 'SHUTDOWN') return 'triangle';
-                if (d.signal === 'WOL') return 'rectRot';
-                return 'circle';
-            });
-            chart.data.datasets[0].pointRadius = historyData.map(d => (d.signal ? 10 : 2));
-            chart.data.datasets[1].data = historyData.map(d => d.load);
-            chart.update('none');
+            updateChartDisplay();
         }
 
         function renderNodesList() {
